@@ -1,0 +1,120 @@
+[project]
+name = "efficientsam3-jetson-bench"
+version = "0.1.0"
+description = "Latency, memory, power, and accuracy benchmarks for EfficientSAM3 on NVIDIA Jetson Orin Nano Super"
+authors = [{ name = "Tristan Tibbs" }]
+requires-python = "==3.10.*"
+dependencies = [
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    # Upstream base dependencies
+    "timm>=1.0.17",
+    "numpy>=1.26.4,<2",
+    "tqdm",
+    "ftfy==6.1.1",
+    "regex",
+    "iopath>=0.1.10",
+    "typing-extensions",
+    "huggingface-hub",
+    "psutil",
+    # Upstream inference imports outside its base dependencies
+    "pillow>=10.0.0",
+    "pycocotools>=2.0.7",
+    "einops>=0.7.0",
+    "opencv-python-headless>=4.9.0.80",
+    "omegaconf>=2.3.0",
+    # Mask hole filling
+    "scikit-image>=0.21.0",
+    "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "triton-windows==3.4.0.post21 ; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.0",
+    "ty>=0.0.86",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.13"
+build-constraint-dependencies = ["setuptools==84.0.0"]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
+    { index = "jetson-jp6-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
+    { index = "jetson-jp6-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
+triton = [
+    { index = "jetson-jp6-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "jetson-jp6-cu126"
+url = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/"
+explicit = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["third_party"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "D", "ANN"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.src]
+exclude = ["third_party"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".*", "third_party"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=efficientsam3_jetson_bench",
+    "--cov-report=term-missing",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/efficientsam3_jetson_bench"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

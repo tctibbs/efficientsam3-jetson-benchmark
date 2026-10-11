@@ -1,0 +1,12 @@
+__pycache__/
+.venv/
+.coverage
+dist/
+.DS_Store
+
+# Checkpoints, ONNX exports, and TensorRT engines
+*.pt
+*.pth
+*.onnx
+*.engine
+*.plan
