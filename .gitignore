@@ -1,0 +1,15 @@
+__pycache__/
+.venv/
+.coverage
+dist/
+.DS_Store
+
+# Checkpoints, ONNX exports, and TensorRT engines are never committed or
+# redistributed. Checkpoints are downloaded from the original sources, ONNX
+# exports are generated locally with upstream's export scripts, and TensorRT
+# engines are built on each device.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.plan
