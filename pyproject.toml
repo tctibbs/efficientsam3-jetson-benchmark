@@ -3,27 +3,12 @@ name = "efficientsam3-jetson-bench"
 version = "0.1.0"
 description = "Latency, memory, power, and accuracy benchmarks for EfficientSAM3 on NVIDIA Jetson Orin Nano Super"
 authors = [{ name = "Tristan Tibbs" }]
-# Python 3.10 on every machine, not the 3.12 upstream declares:
-# - JetPack 6 (Ubuntu 22.04) ships Python 3.10, and its TensorRT Python bindings
-#   are built for that interpreter only.
-# - On the Jetson AI Lab jp6/cu126 index, torch, torchvision, and triton are cp310
-#   only. The cp312 torch on jp6/cu129 (2.8.0) needs glibc 2.38, and Ubuntu 22.04
-#   has 2.35.
-# - Upstream's inference and eval code has no 3.11+ syntax or APIs and runs on 3.10.
-# The upper bound keeps `uv lock` from solving for 3.11+, for which that index has
-# no torch, torchvision, or triton wheels.
 requires-python = "==3.10.*"
 dependencies = [
-    # Same release on every machine. 2.8.0 is the oldest torch on the jp6/cu126
-    # index, and it satisfies upstream's torch>=2.7.0.
     "torch==2.8.0",
     "torchvision==0.23.0",
-    # Upstream base dependencies, from upstream/efficientsam3/pyproject.toml at
-    # bd0936c. Upstream itself is not installed (its requires-python is >=3.12);
-    # code that needs it puts the submodule on sys.path, as upstream's own scripts do.
+    # Upstream base dependencies
     "timm>=1.0.17",
-    # <2 because the Jetson torch wheel is compiled against the NumPy 1.x C API.
-    # Applied everywhere so every machine runs the same NumPy.
     "numpy>=1.26.4,<2",
     "tqdm",
     "ftfy==6.1.1",
@@ -32,25 +17,13 @@ dependencies = [
     "typing-extensions",
     "huggingface-hub",
     "psutil",
-    # Imported on upstream's inference path but declared only in its `stage1` extra
-    # (heavy training deps, never installed here) or not at all.
+    # Upstream inference imports outside its base dependencies
     "pillow>=10.0.0",
     "pycocotools>=2.0.7",
     "einops>=0.7.0",
-    # sam3/train/data/sam3_image_dataset.py raises ImportError at `import sam3`
-    # unless decord, torchcodec, or cv2 imports. decord has no wheels for the Mac or
-    # the Jetson, and the torchcodec releases for torch 2.8 have no Jetson wheel and
-    # need a system FFmpeg.
     "opencv-python-headless>=4.9.0.80",
-    # Imported by every EfficientViT build. Without it eval_coco.py prints
-    # "Failed to load model" and skips the checkpoint instead of failing.
     "omegaconf>=2.3.0",
-    # predict_inst fills mask holes (max_hole_area=256) through connected components.
-    # The backend follows the tensor device: scikit-image for CPU/MPS tensors, triton
-    # for CUDA tensors. CUDA tensors never fall back to scikit-image. Any import or
-    # runtime error in that backend (triton builds a C launcher at its first kernel
-    # launch) makes upstream warn and skip hole filling, which changes accuracy
-    # without failing the run.
+    # Mask hole filling
     "scikit-image>=0.21.0",
     "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "triton-windows==3.4.0.post21 ; sys_platform == 'win32'",
@@ -69,30 +42,14 @@ requires = ["uv_build>=0.13.0,<0.14"]
 build-backend = "uv_build"
 
 [tool.uv]
-# The uv release that wrote uv.lock (lockfile revision 5). uv before 0.12.22 writes
-# an older revision whenever it re-resolves.
 required-version = ">=0.13"
-# iopath 0.1.10 ships only an sdist with setup.py, so every machine builds it. Pin
-# the setuptools that builds it; uv.lock does not cover build dependencies.
 build-constraint-dependencies = ["setuptools==84.0.0"]
-# The three machines this project runs on: Mac (development), Windows workstation
-# (CUDA reference runs), Jetson. Entries must not overlap.
 environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
     "sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
-# Fail `uv lock` on any machine when a wheel-only package has no wheel for one of
-# these platforms, instead of failing later in `uv sync` on that machine.
-required-environments = [
-    "sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "sys_platform == 'linux' and platform_machine == 'aarch64'",
-]
 
-# macOS has no entry, so it gets PyPI's CPU/MPS wheels. Linux aarch64 is the Jetson:
-# PyPI's torch 2.8.0 and torchvision 0.23.0 aarch64 wheels are CPU-only builds
-# (torch reports 2.8.0+cpu), and PyPI has no aarch64 wheel for triton 3.4.0.
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
@@ -106,18 +63,12 @@ triton = [
     { index = "jetson-jp6-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
 ]
 
-# explicit = true: only packages pinned in [tool.uv.sources] come from these indexes.
 [[tool.uv.index]]
-# cu128 is the oldest CUDA build with Blackwell (sm_120) kernels for the
-# workstation's RTX 5080.
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
-# JetPack 6.1 through 6.2.2 (Jetson Linux 36.4 and 36.5) ship the CUDA 12.6 and
-# cuDNN 9 libraries these wheels link against. Use the devpi `+simple` path: the
-# old pypi.jetson-ai-lab.dev domain is gone.
 name = "jetson-jp6-cu126"
 url = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/"
 explicit = true
@@ -126,8 +77,7 @@ explicit = true
 line-length = 88
 target-version = "py310"
 src = ["src", "tests"]
-extend-exclude = ["upstream"]
-# Keep upstream excluded even when a tool passes its file paths explicitly.
+extend-exclude = ["third_party"]
 force-exclude = true
 
 [tool.ruff.lint]
@@ -144,23 +94,11 @@ convention = "google"
 python-version = "3.10"
 
 [tool.ty.src]
-exclude = ["upstream"]
+exclude = ["third_party"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# pytest's defaults plus upstream, whose own test files must never be collected.
-norecursedirs = [
-    "*.egg",
-    ".*",
-    "_darcs",
-    "build",
-    "CVS",
-    "dist",
-    "node_modules",
-    "venv",
-    "{arch}",
-    "upstream",
-]
+norecursedirs = [".*", "third_party"]
 addopts = [
     "--strict-markers",
     "--strict-config",

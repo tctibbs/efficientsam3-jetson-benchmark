@@ -1,4 +1,4 @@
-[submodule "upstream/efficientsam3"]
-	path = upstream/efficientsam3
+[submodule "third_party/efficientsam3"]
+	path = third_party/efficientsam3
 	url = https://github.com/SimonZeng7108/efficientsam3.git
 	shallow = true
