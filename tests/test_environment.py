@@ -129,6 +129,20 @@ def test_jetson_details_reads_board_files(
         "l4t": "36.4.4",
         "power_mode": "MAXN_SUPER",
         "gpu_clock_mhz": None,
+        "cpu_clock_mhz": {},
+    }
+
+
+def test_cpu_clock_mhz_reads_each_cluster(tmp_path: Path) -> None:
+    for name, khz in (("policy0", 1728000), ("policy4", 1497600)):
+        policy = tmp_path / "sys/devices/system/cpu/cpufreq" / name
+        policy.mkdir(parents=True)
+        for prefix in ("cur", "min", "max"):
+            (policy / f"scaling_{prefix}_freq").write_text(f"{khz}\n")
+
+    assert environment.cpu_clock_mhz(tmp_path) == {
+        "policy0": {"current": 1728.0, "min": 1728.0, "max": 1728.0},
+        "policy4": {"current": 1497.6, "min": 1497.6, "max": 1497.6},
     }
 
 

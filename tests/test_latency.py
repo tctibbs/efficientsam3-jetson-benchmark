@@ -94,6 +94,12 @@ def test_autocast_matches_the_precision() -> None:
         assert torch.is_autocast_enabled("cpu")
 
 
+def test_event_factory_only_on_cuda() -> None:
+    assert latency.event_factory("cpu") is None
+    assert latency.event_factory("mps") is None
+    assert latency.event_factory("cuda") is not None
+
+
 def test_synchronizer_per_device() -> None:
     assert latency.synchronizer("cuda") is torch.cuda.synchronize
     assert latency.synchronizer("mps") is torch.mps.synchronize
@@ -145,6 +151,7 @@ def test_measure_reports_stages_end_to_end_text_batches_and_energy(
     measured = latency.measure(latency_run)
 
     assert measured["device_type"] == "cpu"
+    assert measured["timing_method"] == "synchronized_wall_clock"
     assert {stats["count"] for stats in measured["stages_ms"].values()} == {3}
     assert measured["end_to_end_ms"]["count"] == 3
     assert sorted(measured["text_encoder_batch_ms"]) == ["1", "16", "4"]
@@ -173,7 +180,11 @@ def test_run_latency_writes_a_record(
     monkeypatch.setattr(
         latency,
         "measure",
-        lambda run: {"device_type": "cuda", "end_to_end_ms": {"mean_ms": 50.0}},
+        lambda run: {
+            "device_type": "cuda",
+            "timing_method": "cuda_events",
+            "end_to_end_ms": {"mean_ms": 50.0},
+        },
     )
     monkeypatch.setattr(coco_runner, "device_name", lambda device_type: "Orin")
 
@@ -183,7 +194,12 @@ def test_run_latency_writes_a_record(
     assert path.name == f"20261012T080000Z-latency-{MODEL}-fp32-cuda.json"
     assert record["model"]["variant"] == "11m"
     assert record["input"]["prompt"] == "person"
-    assert record["settings"] == {"precision": "fp32", "warmup": 2, "iterations": 3}
+    assert record["settings"] == {
+        "precision": "fp32",
+        "warmup": 2,
+        "iterations": 3,
+        "timing_method": "cuda_events",
+    }
     assert record["end_to_end_ms"] == {"mean_ms": 50.0}
     assert record["runtime"]["device_name"] == "Orin"
     assert "device_type" not in record

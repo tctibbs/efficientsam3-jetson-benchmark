@@ -72,6 +72,15 @@ def synchronizer(device_type: str) -> Callable[[], None]:
     return lambda: None
 
 
+def event_factory(device_type: str) -> Callable[[], Any] | None:
+    """Return a CUDA timing-event constructor on CUDA, otherwise None."""
+    import torch
+
+    if device_type == "cuda":
+        return lambda: torch.cuda.Event(enable_timing=True)
+    return None
+
+
 def load_pipeline(run: LatencyRun, checkpoint: Path) -> tuple[Any, Any]:
     """Build the model and upstream's processor, with both on the same device."""
     # Upstream is importable only once its package directory is on sys.path.
@@ -161,7 +170,8 @@ def measure(run: LatencyRun) -> dict[str, Any]:
         )
     model, processor = load_pipeline(run, checkpoint)
     device_type = processor.device.type
-    timer = StageTimer(synchronizer(device_type))
+    make_event = event_factory(device_type)
+    timer = StageTimer(synchronizer(device_type), make_event=make_event)
     instrument(model, processor, timer)
     image = Image.open(run.image).convert("RGB")
     outputs: dict[str, Any] = {}
@@ -182,6 +192,7 @@ def measure(run: LatencyRun) -> dict[str, Any]:
     scores = outputs["state"]["scores"]
     return {
         "device_type": device_type,
+        "timing_method": "cuda_events" if make_event else "synchronized_wall_clock",
         "stages_ms": {
             name: summarize(values).as_record()
             for name, values in stage_samples(timer.samples).items()
@@ -216,6 +227,7 @@ def run_latency(run: LatencyRun, results_dir: Path) -> Path:
     backbone, variant = FULL_MODELS[run.model]
     stamp = datetime.fromisoformat(context["timestamp"]).strftime("%Y%m%dT%H%M%SZ")
     device_type = measured.pop("device_type")
+    timing_method = measured.pop("timing_method")
     run_id = f"{stamp}-latency-{run.model}-{run.precision}-{device_type}"
     record = {
         "run_id": run_id,
@@ -242,6 +254,7 @@ def run_latency(run: LatencyRun, results_dir: Path) -> Path:
             "precision": run.precision,
             "warmup": run.warmup,
             "iterations": run.iterations,
+            "timing_method": timing_method,
         },
         **measured,
     }

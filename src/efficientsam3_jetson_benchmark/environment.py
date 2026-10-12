@@ -65,8 +65,22 @@ def gpu_clock_mhz(root: Path = Path("/")) -> dict[str, float] | None:
     return None
 
 
+def cpu_clock_mhz(root: Path = Path("/")) -> dict[str, dict[str, float]]:
+    """Return each CPU cluster's current, minimum, and maximum clock.
+
+    A cluster is locked when all three are equal, as after jetson_clocks.
+    """
+    clusters = {}
+    for policy in sorted((root / "sys/devices/system/cpu/cpufreq").glob("policy*")):
+        clusters[policy.name] = {
+            name: int((policy / f"scaling_{prefix}_freq").read_text()) / 1e3
+            for name, prefix in (("current", "cur"), ("min", "min"), ("max", "max"))
+        }
+    return clusters
+
+
 def jetson_details(root: Path = Path("/")) -> dict[str, Any] | None:
-    """Return the Jetson board, L4T release, power mode, and GPU clock.
+    """Return the Jetson board, L4T release, power mode, and GPU and CPU clocks.
 
     Returns None off a Jetson.
     """
@@ -81,6 +95,7 @@ def jetson_details(root: Path = Path("/")) -> dict[str, Any] | None:
         "l4t": parse_l4t_release(release_file.read_text()),
         "power_mode": nvpmodel_mode(),
         "gpu_clock_mhz": gpu_clock_mhz(root),
+        "cpu_clock_mhz": cpu_clock_mhz(root),
     }
 
 

@@ -49,3 +49,31 @@ def test_time_calls_times_each_call() -> None:
 
     assert len(durations) == len(calls) == 5
     assert all(duration >= 0 for duration in durations)
+
+
+class FakeEvent:
+    """A timing event whose clock advances by one millisecond per record."""
+
+    clock = 0
+
+    def record(self) -> None:
+        FakeEvent.clock += 1
+        self.at = FakeEvent.clock
+
+    def elapsed_time(self, end: "FakeEvent") -> float:
+        return float(end.at - self.at)
+
+
+def test_events_time_stages_without_synchronizing_each_one() -> None:
+    syncs = []
+    timer = StageTimer(
+        synchronize=lambda: syncs.append(1), make_event=FakeEvent, recording=True
+    )
+    encode = timer.wrap("encode", lambda: None)
+    decode = timer.wrap("decode", lambda: None)
+
+    durations = timer.time_calls(lambda: (encode(), decode()), iterations=3)
+
+    assert durations == [5.0, 5.0, 5.0]
+    assert timer.samples == {"encode": [1.0] * 3, "decode": [1.0] * 3}
+    assert len(syncs) == 6

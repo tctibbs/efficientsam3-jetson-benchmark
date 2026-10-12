@@ -54,15 +54,20 @@ def summarize(durations_ms: list[float]) -> LatencyStats:
 
 @dataclass
 class StageTimer:
-    """Times named stages, synchronizing the device so queued GPU work counts.
+    """Times named stages and whole steps in milliseconds.
 
-    While recording is off, wrapped stages run without synchronizing, so an
-    end-to-end measurement is not slowed by per-stage synchronization.
+    With make_event (CUDA), each stage is bracketed by timing events recorded on
+    the GPU stream, with no synchronization between stages; the events are read
+    once per step. Without it, each stage is bracketed by device
+    synchronization and wall-clock reads. While recording is off, wrapped stages
+    run untimed, so an end-to-end measurement carries no per-stage overhead.
     """
 
     synchronize: Callable[[], None]
+    make_event: Callable[[], Any] | None = None
     recording: bool = False
     samples: dict[str, list[float]] = field(default_factory=dict)
+    _pending: list[tuple[str, Any, Any]] = field(default_factory=list)
 
     def wrap(self, name: str, function: Callable[..., Any]) -> Callable[..., Any]:
         """Return function wrapped so each call is timed as stage name."""
@@ -70,6 +75,13 @@ class StageTimer:
         def timed(*args: Any, **kwargs: Any) -> Any:
             if not self.recording:
                 return function(*args, **kwargs)
+            if self.make_event is not None:
+                start_event, end_event = self.make_event(), self.make_event()
+                start_event.record()
+                result = function(*args, **kwargs)
+                end_event.record()
+                self._pending.append((name, start_event, end_event))
+                return result
             self.synchronize()
             start = time.perf_counter_ns()
             result = function(*args, **kwargs)
@@ -81,12 +93,24 @@ class StageTimer:
         return timed
 
     def time_calls(self, step: Callable[[], object], iterations: int) -> list[float]:
-        """Return the wall-clock duration of each call to step, in milliseconds."""
+        """Return the duration of each call to step, in milliseconds."""
         durations = []
         for _ in range(iterations):
             self.synchronize()
-            start = time.perf_counter_ns()
+            if self.make_event is None:
+                start = time.perf_counter_ns()
+                step()
+                self.synchronize()
+                durations.append((time.perf_counter_ns() - start) / 1e6)
+                continue
+            start_event, end_event = self.make_event(), self.make_event()
+            start_event.record()
             step()
+            end_event.record()
             self.synchronize()
-            durations.append((time.perf_counter_ns() - start) / 1e6)
+            durations.append(start_event.elapsed_time(end_event))
+            for name, stage_start, stage_end in self._pending:
+                elapsed_ms = stage_start.elapsed_time(stage_end)
+                self.samples.setdefault(name, []).append(elapsed_ms)
+            self._pending.clear()
         return durations
