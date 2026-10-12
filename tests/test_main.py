@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from efficientsam3_jetson_benchmark import __main__ as cli
-from efficientsam3_jetson_benchmark import accuracy, download
+from efficientsam3_jetson_benchmark import accuracy, download, latency
 
 
 def test_command_is_required() -> None:
@@ -106,4 +106,58 @@ def test_accuracy_coco_command(
     assert run.upstream == Path("third_party/efficientsam3")
     assert capsys.readouterr().out.strip() == (
         f"mIoU 0.6283 over 96 instances: {results}"
+    )
+
+
+def test_accuracy_rejects_full_models() -> None:
+    # Full models are not named efficient_sam3_*, so eval_coco.py would skip them.
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "accuracy",
+                "coco",
+                "--checkpoint",
+                "efficientsam3_tinyvit",
+                "--first",
+                "1",
+            ]
+        )
+
+
+def test_latency_pytorch_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs = []
+    results = tmp_path / "result.json"
+    results.write_text(json.dumps({"end_to_end_ms": {"p50_ms": 61.25, "fps": 15.5}}))
+
+    def fake_run(run: latency.LatencyRun, results_dir: Path) -> Path:
+        runs.append(run)
+        return results
+
+    monkeypatch.setattr(latency, "run_latency", fake_run)
+
+    cli.main(
+        [
+            "latency",
+            "pytorch",
+            "--model",
+            "efficientsam3_tinyvit",
+            "--precision",
+            "fp16",
+        ]
+    )
+
+    run = runs[0]
+    assert (run.model, run.precision, run.prompt) == (
+        "efficientsam3_tinyvit",
+        "fp16",
+        "person",
+    )
+    assert (run.warmup, run.iterations) == (50, 300)
+    assert run.image.name == "000000397133.jpg"
+    assert capsys.readouterr().out.strip() == (
+        f"end to end p50 61.2 ms, 15.5 FPS from the mean: {results}"
     )

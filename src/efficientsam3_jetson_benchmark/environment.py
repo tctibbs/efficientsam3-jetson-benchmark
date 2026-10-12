@@ -52,8 +52,24 @@ def nvpmodel_mode() -> str | None:
     return match[1] if match else None
 
 
-def jetson_details(root: Path = Path("/")) -> dict[str, str | None] | None:
-    """Return the Jetson board, L4T release, and power mode, or None off a Jetson."""
+def gpu_clock_mhz(root: Path = Path("/")) -> dict[str, float] | None:
+    """Return the GPU's current, minimum, and maximum clock, or None without one.
+
+    The clock is locked when all three are equal, as after jetson_clocks.
+    """
+    for device in sorted((root / "sys" / "class" / "devfreq").glob("*.gpu")):
+        return {
+            name: int((device / f"{prefix}_freq").read_text()) / 1e6
+            for name, prefix in (("current", "cur"), ("min", "min"), ("max", "max"))
+        }
+    return None
+
+
+def jetson_details(root: Path = Path("/")) -> dict[str, Any] | None:
+    """Return the Jetson board, L4T release, power mode, and GPU clock.
+
+    Returns None off a Jetson.
+    """
     release_file = root / "etc" / "nv_tegra_release"
     if not release_file.is_file():
         return None
@@ -64,6 +80,7 @@ def jetson_details(root: Path = Path("/")) -> dict[str, str | None] | None:
         else None,
         "l4t": parse_l4t_release(release_file.read_text()),
         "power_mode": nvpmodel_mode(),
+        "gpu_clock_mhz": gpu_clock_mhz(root),
     }
 
 

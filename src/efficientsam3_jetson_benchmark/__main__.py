@@ -4,7 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
-from efficientsam3_jetson_benchmark import accuracy, download
+from efficientsam3_jetson_benchmark import accuracy, download, latency
+
+# First COCO val2017 image, the one eval_coco.py also takes first.
+DEFAULT_IMAGE = Path("data/coco/images/val2017/000000397133.jpg")
 
 
 def positive_int(text: str) -> int:
@@ -37,12 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
     measure = commands.add_parser("accuracy", help="Run accuracy benchmarks")
     suites = measure.add_subparsers(dest="suite", required=True)
     coco_accuracy = suites.add_parser(
-        "coco", help="Tier A: eval_coco.py box-prompt mIoU on the first N images"
+        "coco", help="eval_coco.py box-prompt mIoU on the first N images"
     )
     coco_accuracy.add_argument(
         "--checkpoint",
         required=True,
-        choices=sorted(name for name in download.CHECKPOINTS if name != "sam3"),
+        choices=sorted(
+            name for name in download.CHECKPOINTS if name.startswith("efficient_sam3_")
+        ),
     )
     coco_accuracy.add_argument("--first", type=positive_int, required=True)
     coco_accuracy.add_argument(
@@ -53,6 +58,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--upstream", type=Path, default=Path("third_party/efficientsam3")
     )
     coco_accuracy.add_argument("--results", type=Path, default=Path("results"))
+
+    timing = commands.add_parser("latency", help="Run latency benchmarks")
+    backends = timing.add_subparsers(dest="backend", required=True)
+    pytorch = backends.add_parser(
+        "pytorch", help="PyTorch text-prompt pipeline, stage by stage"
+    )
+    pytorch.add_argument("--model", required=True, choices=sorted(latency.FULL_MODELS))
+    pytorch.add_argument("--precision", default="fp32", choices=latency.PRECISIONS)
+    pytorch.add_argument("--prompt", default="person")
+    pytorch.add_argument("--image", type=Path, default=DEFAULT_IMAGE)
+    pytorch.add_argument("--warmup", type=positive_int, default=50)
+    pytorch.add_argument("--iterations", type=positive_int, default=300)
+    pytorch.add_argument("--checkpoints-root", type=Path, default=Path("checkpoints"))
+    pytorch.add_argument(
+        "--upstream", type=Path, default=Path("third_party/efficientsam3")
+    )
+    pytorch.add_argument("--results", type=Path, default=Path("results"))
     return parser
 
 
@@ -82,13 +104,35 @@ def run_accuracy(args: argparse.Namespace) -> None:
     print(f"mIoU {metrics['miou']:.4f} over {metrics['instances']} instances: {path}")
 
 
+def run_latency(args: argparse.Namespace) -> None:
+    """Run the latency benchmark and print the end-to-end result."""
+    run = latency.LatencyRun(
+        model=args.model,
+        precision=args.precision,
+        prompt=args.prompt,
+        image=args.image,
+        warmup=args.warmup,
+        iterations=args.iterations,
+        checkpoints_root=args.checkpoints_root,
+        upstream=args.upstream,
+    )
+    path = latency.run_latency(run, args.results)
+    end_to_end = json.loads(path.read_text())["end_to_end_ms"]
+    print(
+        f"end to end p50 {end_to_end['p50_ms']:.1f} ms, "
+        f"{end_to_end['fps']:.1f} FPS from the mean: {path}"
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run the command given on the command line."""
     args = build_parser().parse_args(argv)
-    if args.command == "download":
-        run_download(args)
-    else:
-        run_accuracy(args)
+    commands = {
+        "download": run_download,
+        "accuracy": run_accuracy,
+        "latency": run_latency,
+    }
+    commands[args.command](args)
 
 
 if __name__ == "__main__":

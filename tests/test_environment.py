@@ -128,7 +128,25 @@ def test_jetson_details_reads_board_files(
         "model": "NVIDIA Jetson Board",
         "l4t": "36.4.4",
         "power_mode": "MAXN_SUPER",
+        "gpu_clock_mhz": None,
     }
+
+
+def test_gpu_clock_mhz_reads_the_devfreq_files(tmp_path: Path) -> None:
+    gpu = tmp_path / "sys" / "class" / "devfreq" / "17000000.gpu"
+    gpu.mkdir(parents=True)
+    for name, hertz in (("cur", 1020000000), ("min", 306000000), ("max", 1020000000)):
+        (gpu / f"{name}_freq").write_text(f"{hertz}\n")
+
+    assert environment.gpu_clock_mhz(tmp_path) == {
+        "current": 1020.0,
+        "min": 306.0,
+        "max": 1020.0,
+    }
+
+
+def test_gpu_clock_mhz_is_none_without_a_gpu(tmp_path: Path) -> None:
+    assert environment.gpu_clock_mhz(tmp_path) is None
 
 
 def test_jetson_details_is_none_off_a_jetson(tmp_path: Path) -> None:
