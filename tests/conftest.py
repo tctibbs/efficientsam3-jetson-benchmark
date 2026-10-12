@@ -25,8 +25,13 @@ def annotations_file(tmp_path: Path) -> Path:
             {"id": 10, "file_name": "000000000010.jpg"},
             {"id": 20, "file_name": "000000000020.jpg"},
         ],
-        "annotations": [],
-        "categories": [],
+        "annotations": [
+            {"id": 1, "image_id": 30, "category_id": 1, "iscrowd": 0},
+            {"id": 2, "image_id": 30, "category_id": 1, "iscrowd": 1},
+            {"id": 3, "image_id": 10, "category_id": 1, "iscrowd": 0},
+            {"id": 4, "image_id": 20, "category_id": 1, "iscrowd": 0},
+        ],
+        "categories": [{"id": 1, "name": "thing"}],
     }
     path = tmp_path / "instances_val2017.json"
     path.write_text(json.dumps(dataset))
