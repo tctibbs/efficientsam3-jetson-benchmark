@@ -1,0 +1,177 @@
+{
+  "run_id": "20261012T121948Z-latency-efficientsam3_efficientvit-fp16-cuda",
+  "benchmark": "pytorch-text-prompt-latency",
+  "environment": {
+    "timestamp": "2026-10-12T12:19:48+00:00",
+    "system": "Linux",
+    "release": "5.15.148-tegra",
+    "machine": "aarch64",
+    "python": "3.10.12",
+    "memory_mb": {
+      "total": 7619,
+      "available": 5442
+    },
+    "jetson": {
+      "model": "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super",
+      "l4t": "36.4.4",
+      "power_mode": "MAXN_SUPER",
+      "gpu_clock_mhz": {
+        "current": 1020.0,
+        "min": 1020.0,
+        "max": 1020.0
+      },
+      "cpu_clock_mhz": {
+        "policy0": {
+          "current": 1728.0,
+          "min": 1728.0,
+          "max": 1728.0
+        },
+        "policy4": {
+          "current": 1728.0,
+          "min": 1728.0,
+          "max": 1728.0
+        }
+      }
+    },
+    "benchmark_commit": "f74eae92b7afb10177c58392dc0c472b67b2d592",
+    "benchmark_dirty": false,
+    "upstream_commit": "bd0936c788fed8d51fa799437f05abd97b401b06"
+  },
+  "runtime": {
+    "torch": "2.8.0",
+    "cuda": "12.6",
+    "cudnn": 90300,
+    "device_type": "cuda",
+    "device_name": "Orin"
+  },
+  "model": {
+    "name": "efficientsam3_efficientvit",
+    "backbone": "efficientvit",
+    "variant": "b1",
+    "text_encoder": "MobileCLIP-S0",
+    "text_context_length": 16,
+    "repo_id": "Simon7108528/EfficientSAM3",
+    "revision": "85b05896928f974e308f889d7ccb2eefc069de98",
+    "filename": "efficientsam3_ft/efficientsam3_efficientvit.pt",
+    "sha256": "086b04b2e7da7cc98aa4621b70c7291608aa9d187357b98d03bd4d6533ed5a17"
+  },
+  "input": {
+    "image": "000000397133.jpg",
+    "image_sha256": "09e1d25c75f7879bdaa69c327fece5cabacd53939c8c2ef9e87f1c97a2e478c4",
+    "prompt": "person"
+  },
+  "settings": {
+    "precision": "fp16",
+    "warmup": 50,
+    "iterations": 300,
+    "timing_method": "cuda_events"
+  },
+  "stages_ms": {
+    "preprocess": {
+      "count": 300,
+      "mean_ms": 5.5615590413411455,
+      "p50_ms": 5.561824798583984,
+      "p90_ms": 5.591981506347656,
+      "p99_ms": 5.625037536621094,
+      "min_ms": 5.459136962890625,
+      "max_ms": 5.729217529296875,
+      "fps": 179.80569702966858
+    },
+    "image_encoder": {
+      "count": 300,
+      "mean_ms": 112.10624819437663,
+      "p50_ms": 112.05225372314453,
+      "p90_ms": 112.49408111572266,
+      "p99_ms": 112.7570425415039,
+      "min_ms": 111.43081665039062,
+      "max_ms": 114.74143981933594,
+      "fps": 8.920109415009048
+    },
+    "text_encoder": {
+      "count": 300,
+      "mean_ms": 13.175831581751506,
+      "p50_ms": 13.196320056915283,
+      "p90_ms": 13.29047040939331,
+      "p99_ms": 13.444446668624877,
+      "min_ms": 12.672191619873047,
+      "max_ms": 13.801024436950684,
+      "fps": 75.8965378234644
+    },
+    "decoder": {
+      "count": 300,
+      "mean_ms": 232.63172302246093,
+      "p50_ms": 232.6366729736328,
+      "p90_ms": 233.14690551757812,
+      "p99_ms": 233.70299377441404,
+      "min_ms": 231.3627471923828,
+      "max_ms": 240.08685302734375,
+      "fps": 4.298639871671537
+    },
+    "postprocess": {
+      "count": 300,
+      "mean_ms": 1.9204552936553956,
+      "p50_ms": 1.912940502166748,
+      "p90_ms": 1.9531706809997558,
+      "p99_ms": 2.1723131847381585,
+      "min_ms": 1.832932472229004,
+      "max_ms": 2.318462371826172,
+      "fps": 520.7098563052721
+    }
+  },
+  "end_to_end_ms": {
+    "count": 300,
+    "mean_ms": 365.20790211995444,
+    "p50_ms": 365.04736328125,
+    "p90_ms": 365.85353698730466,
+    "p99_ms": 367.21518280029295,
+    "min_ms": 364.03192138671875,
+    "max_ms": 372.8999328613281,
+    "fps": 2.738166381929887
+  },
+  "text_encoder_batch_ms": {
+    "1": {
+      "count": 300,
+      "mean_ms": 12.98836374282837,
+      "p50_ms": 12.983439922332764,
+      "p90_ms": 13.05469799041748,
+      "p99_ms": 13.15135251045227,
+      "min_ms": 12.860447883605957,
+      "max_ms": 13.299039840698242,
+      "fps": 76.99199220164728
+    },
+    "4": {
+      "count": 300,
+      "mean_ms": 13.310255886713664,
+      "p50_ms": 13.30843210220337,
+      "p90_ms": 13.37230396270752,
+      "p99_ms": 13.43183364868164,
+      "min_ms": 13.16988754272461,
+      "max_ms": 13.605152130126953,
+      "fps": 75.1300357041372
+    },
+    "16": {
+      "count": 300,
+      "mean_ms": 14.463300685882569,
+      "p50_ms": 14.4617919921875,
+      "p90_ms": 14.548518562316895,
+      "p99_ms": 14.71102268218994,
+      "min_ms": 14.25391960144043,
+      "max_ms": 14.799296379089355,
+      "fps": 69.1405109883449
+    }
+  },
+  "output": {
+    "detections": 1,
+    "top_score": 0.85498046875
+  },
+  "power": {
+    "samples": 1044,
+    "vdd_in_mean_mw": 15890.253831417625,
+    "vdd_in_peak_mw": 16474.0,
+    "gr3d_mean_percent": 79.29310344827586,
+    "ram_used_peak_mb": 4217.0,
+    "gpu_temperature_peak_c": 64.531,
+    "junction_temperature_peak_c": 64.531
+  },
+  "energy_per_frame_mj": 5803.246265925599
+}
