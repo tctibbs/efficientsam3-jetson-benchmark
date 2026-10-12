@@ -154,6 +154,16 @@ def stream_to_file(url: str, target: Path) -> Path:
     return partial.replace(target)
 
 
+def checkpoint_path(name: str, root: Path) -> Path:
+    """Return where download_checkpoint stores a catalogued checkpoint.
+
+    Raises:
+        KeyError: name is not in CHECKPOINTS.
+    """
+    hub_file = CHECKPOINTS[name]
+    return root / hub_file.repo_id.replace("/", "--") / hub_file.filename
+
+
 def download_checkpoint(name: str, root: Path) -> Path:
     """Download a catalogued checkpoint, skipping it if a verified copy exists.
 
@@ -169,8 +179,8 @@ def download_checkpoint(name: str, root: Path) -> Path:
         ChecksumError: The downloaded file differs from its pin.
     """
     hub_file = CHECKPOINTS[name]
+    target = checkpoint_path(name, root)
     local_dir = root / hub_file.repo_id.replace("/", "--")
-    target = local_dir / hub_file.filename
     if matches(target, hub_file.pin):
         return target
     from huggingface_hub import constants, hf_hub_download
