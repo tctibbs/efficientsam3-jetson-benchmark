@@ -21,6 +21,8 @@ def _summary(ious: list[float], skips: int = 0) -> dict[str, Any]:
     return {
         "torch": "2.8.0",
         "numpy": "1.26.4",
+        "cuda": None,
+        "cudnn": None,
         "device_type": "mps",
         "device_name": "Apple Chip",
         "autocast": {"enabled": True, "dtype": "float16"},
@@ -135,6 +137,7 @@ def test_run_coco_accuracy_writes_record(
     assert record["dataset"]["image_ids"] == [30, 10]
     assert record["checkpoint"]["repo_id"] == "owner/repo"
     assert record["runtime"]["autocast"] == {"enabled": True, "dtype": "float16"}
+    assert record["runtime"]["cuda"] is None
     assert record["ious"] == [0.25, 0.333333]
 
 

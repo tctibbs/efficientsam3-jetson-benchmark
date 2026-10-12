@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.version
 
 from efficientsam3_jetson_benchmark import coco_runner
 
@@ -129,3 +130,5 @@ def test_main_runs_eval_coco_and_writes_summary(
     assert summary["device_type"] == "cpu"
     assert summary["autocast"] == {"enabled": False, "dtype": None}
     assert summary["torch"] == torch.__version__
+    assert summary["cuda"] == torch.version.cuda
+    assert "cudnn" in summary

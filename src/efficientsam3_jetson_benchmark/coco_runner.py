@@ -25,6 +25,7 @@ from typing import Any
 
 import numpy
 import torch
+import torch.version
 
 EVAL_COCO = Path("eval/eval_coco.py")
 POSTPROCESS_SKIP = "Skipping the post-processing step"
@@ -120,6 +121,10 @@ def main(argv: list[str] | None = None) -> None:
     summary = {
         "torch": torch.__version__,
         "numpy": numpy.__version__,
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version()
+        if torch.backends.cudnn.is_available()
+        else None,
         "device_type": device_type,
         "device_name": device_name(device_type),
         "autocast": autocast_state(device_type),
