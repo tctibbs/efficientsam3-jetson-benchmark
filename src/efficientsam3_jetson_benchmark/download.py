@@ -1,4 +1,4 @@
-"""Download pinned checkpoints and COCO val2017 data, verifying each file."""
+"""Download pinned checkpoints, COCO val2017, and SA-Co/Gold, verifying each."""
 
 import hashlib
 import json
@@ -16,6 +16,8 @@ COCO_ANNOTATIONS_URL = (
 )
 COCO_ANNOTATIONS_MEMBER = "annotations/instances_val2017.json"
 COCO_IMAGES_URL = "http://images.cocodataset.org/val2017/"
+SACO_GOLD_URL = "https://sa-co.roboflow.com/gold/all.zip"
+SACO_GOLD_PARTS = ("gt-annotations", "metaclip-images", "sa1b-images")
 
 
 class ChecksumError(RuntimeError):
@@ -132,6 +134,9 @@ CHECKPOINTS: dict[str, HubFile] = {
 
 COCO_ANNOTATIONS_ARCHIVE = PinnedFile(
     252907541, "113a836d90195ee1f884e704da6304dfaaecff1f023f49b6ca93c4aaae470268"
+)
+SACO_GOLD_ARCHIVE = PinnedFile(
+    2716161466, "5ca9be2ea826e29a23f8dafd1520e5ffea2d2753fc901283874402ebf2bad6b4"
 )
 COCO_VAL_ANNOTATIONS = PinnedFile(
     19987840, "e8c7f7908f1d7278341fae127d0da654f102f11bd7b21d8aeefa635b8c810b6f"
@@ -272,3 +277,35 @@ def download_coco_images(
             stream_to_file(COCO_IMAGES_URL + file_names[image_id], target)
         paths.append(target)
     return paths
+
+
+def download_saco_gold(root: Path) -> Path:
+    """Download and unpack SA-Co/Gold, skipping it if already unpacked.
+
+    The archive holds one zip per part, and each part unpacks to root/all/<part>,
+    the layout upstream's SA-Co/Gold scripts read. The zips are deleted after.
+
+    Returns:
+        The directory that holds the parts, root/all.
+
+    Raises:
+        ChecksumError: The archive differs from its pin.
+    """
+    parts_root = root / "all"
+    marker = parts_root / "complete.json"
+    done = {"sha256": SACO_GOLD_ARCHIVE.sha256}
+    if marker.is_file() and json.loads(marker.read_text()) == done:
+        return parts_root
+    archive = root / "all.zip"
+    if not matches(archive, SACO_GOLD_ARCHIVE):
+        require(stream_to_file(SACO_GOLD_URL, archive), SACO_GOLD_ARCHIVE)
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(root)
+    for part in SACO_GOLD_PARTS:
+        inner = parts_root / f"{part}.zip"
+        with zipfile.ZipFile(inner) as bundle:
+            bundle.extractall(parts_root)
+        inner.unlink()
+    archive.unlink()
+    marker.write_text(json.dumps(done))
+    return parts_root

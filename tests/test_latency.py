@@ -144,7 +144,9 @@ def test_measure_reports_stages_end_to_end_text_batches_and_energy(
 ) -> None:
     model = FakeModel()
     monkeypatch.setattr(
-        latency, "load_pipeline", lambda run, checkpoint: (model, FakeProcessor(model))
+        latency,
+        "load_pipeline",
+        lambda model_name, checkpoint, upstream: (model, FakeProcessor(model)),
     )
     monkeypatch.setattr(latency, "TegrastatsSampler", FakeSampler)
 
@@ -232,7 +234,9 @@ def test_load_pipeline_builds_on_the_processor_device(
         monkeypatch.delitem(sys.modules, name)  # restored after the test
 
     try:
-        model, processor = latency.load_pipeline(latency_run, Path("weights.pt"))
+        model, processor = latency.load_pipeline(
+            MODEL, Path("weights.pt"), latency_run.upstream
+        )
     finally:
         for name in [name for name in sys.modules if name.split(".")[0] == "sam3"]:
             del sys.modules[name]
