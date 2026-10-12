@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from efficientsam3_jetson_benchmark import accuracy, download, latency
+from efficientsam3_jetson_benchmark import accuracy, download, latency, saco_gold
 
 # First COCO val2017 image, the one eval_coco.py also takes first.
 DEFAULT_IMAGE = Path("data/coco/images/val2017/000000397133.jpg")
@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of images, in the order eval_coco.py uses",
     )
     coco.add_argument("--root", type=Path, default=Path("data/coco"))
+    gold = targets.add_parser("saco-gold", help="SA-Co/Gold labels and images")
+    gold.add_argument("--root", type=Path, default=Path("data/saco-gold"))
 
     measure = commands.add_parser("accuracy", help="Run accuracy benchmarks")
     suites = measure.add_subparsers(dest="suite", required=True)
@@ -58,6 +60,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--upstream", type=Path, default=Path("third_party/efficientsam3")
     )
     coco_accuracy.add_argument("--results", type=Path, default=Path("results"))
+    gold_accuracy = suites.add_parser(
+        "saco-gold", help="SA-Co/Gold text-prompt cgF1 on the first N images per domain"
+    )
+    gold_accuracy.add_argument(
+        "--model", required=True, choices=sorted(latency.FULL_MODELS)
+    )
+    gold_accuracy.add_argument(
+        "--precision",
+        default="bf16",
+        choices=latency.PRECISIONS,
+        help="Autocast precision; upstream's SA-Co/Gold script uses bf16",
+    )
+    gold_accuracy.add_argument("--images-per-subset", type=positive_int, default=100)
+    gold_accuracy.add_argument(
+        "--subsets", nargs="+", choices=list(saco_gold.SUBSETS), default=None
+    )
+    gold_accuracy.add_argument(
+        "--checkpoints-root", type=Path, default=Path("checkpoints")
+    )
+    gold_accuracy.add_argument("--saco-root", type=Path, default=Path("data/saco-gold"))
+    gold_accuracy.add_argument(
+        "--upstream", type=Path, default=Path("third_party/efficientsam3")
+    )
+    gold_accuracy.add_argument("--results", type=Path, default=Path("results"))
 
     timing = commands.add_parser("latency", help="Run latency benchmarks")
     backends = timing.add_subparsers(dest="backend", required=True)
@@ -84,6 +110,9 @@ def run_download(args: argparse.Namespace) -> None:
         for name in args.names:
             print(download.download_checkpoint(name, args.root))
         return
+    if args.target == "saco-gold":
+        print(download.download_saco_gold(args.root))
+        return
     annotations = download.download_coco_annotations(args.root)
     image_ids = download.first_image_ids(annotations, args.first)
     paths = download.download_coco_images(annotations, image_ids, args.root)
@@ -92,6 +121,9 @@ def run_download(args: argparse.Namespace) -> None:
 
 def run_accuracy(args: argparse.Namespace) -> None:
     """Run the accuracy suite and print where its results went."""
+    if args.suite == "saco-gold":
+        run_saco_gold(args)
+        return
     run = accuracy.CocoAccuracyRun(
         checkpoint=args.checkpoint,
         first=args.first,
@@ -102,6 +134,26 @@ def run_accuracy(args: argparse.Namespace) -> None:
     path = accuracy.run_coco_accuracy(run, args.results)
     metrics = json.loads(path.read_text())["metrics"]
     print(f"mIoU {metrics['miou']:.4f} over {metrics['instances']} instances: {path}")
+
+
+def run_saco_gold(args: argparse.Namespace) -> None:
+    """Run the SA-Co/Gold suite and print the average cgF1."""
+    run = saco_gold.SacoGoldRun(
+        model=args.model,
+        precision=args.precision,
+        images_per_subset=args.images_per_subset,
+        subsets=tuple(args.subsets or saco_gold.SUBSETS),
+        saco_root=args.saco_root,
+        checkpoints_root=args.checkpoints_root,
+        upstream=args.upstream,
+    )
+    path = saco_gold.run_saco_gold(run, args.results)
+    average = json.loads(path.read_text())["average"]
+    print(
+        f"cgF1 {100 * average['cgF1']:.2f}, IL_MCC {average['IL_MCC']:.2f}, "
+        f"pmF1 {100 * average['positive_micro_F1']:.2f} averaged over "
+        f"{len(run.subsets)} domains: {path}"
+    )
 
 
 def run_latency(args: argparse.Namespace) -> None:

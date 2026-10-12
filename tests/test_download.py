@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -238,3 +239,68 @@ def test_download_coco_annotations_skips_verified_copy(
     monkeypatch.setattr(download, "stream_to_file", fail)
 
     assert download.download_coco_annotations(tmp_path) == target
+
+
+def _saco_gold_archive() -> bytes:
+    """An all.zip that nests one zip per part, as the SA-Co/Gold archive does."""
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as bundle:
+        for part in download.SACO_GOLD_PARTS:
+            inner = io.BytesIO()
+            with zipfile.ZipFile(inner, "w") as part_bundle:
+                part_bundle.writestr(f"{part}/{part}.txt", part)
+            bundle.writestr(f"all/{part}.zip", inner.getvalue())
+    return outer.getvalue()
+
+
+def test_download_saco_gold_unpacks_each_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = _saco_gold_archive()
+    monkeypatch.setattr(download, "SACO_GOLD_ARCHIVE", _pin(archive))
+
+    def fake_stream(url: str, target: Path) -> Path:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(archive)
+        return target
+
+    monkeypatch.setattr(download, "stream_to_file", fake_stream)
+
+    parts_root = download.download_saco_gold(tmp_path)
+
+    assert parts_root == tmp_path / "all"
+    for part in download.SACO_GOLD_PARTS:
+        assert (parts_root / part / f"{part}.txt").read_text() == part
+    assert list(tmp_path.rglob("*.zip")) == []
+
+
+def test_download_saco_gold_reuses_a_verified_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = _saco_gold_archive()
+    monkeypatch.setattr(download, "SACO_GOLD_ARCHIVE", _pin(archive))
+    (tmp_path / "all.zip").write_bytes(archive)
+
+    def fail(url: str, target: Path) -> Path:
+        raise AssertionError("downloaded an archive that was already verified")
+
+    monkeypatch.setattr(download, "stream_to_file", fail)
+
+    parts_root = download.download_saco_gold(tmp_path)
+
+    assert (parts_root / "sa1b-images" / "sa1b-images.txt").is_file()
+
+
+def test_download_saco_gold_skips_an_unpacked_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "all" / "complete.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"sha256": download.SACO_GOLD_ARCHIVE.sha256}))
+
+    def fail(url: str, target: Path) -> Path:
+        raise AssertionError("downloaded SA-Co/Gold that was already unpacked")
+
+    monkeypatch.setattr(download, "stream_to_file", fail)
+
+    assert download.download_saco_gold(tmp_path) == tmp_path / "all"

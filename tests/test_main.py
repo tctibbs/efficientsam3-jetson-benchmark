@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from efficientsam3_jetson_benchmark import __main__ as cli
-from efficientsam3_jetson_benchmark import accuracy, download, latency
+from efficientsam3_jetson_benchmark import accuracy, download, latency, saco_gold
 
 
 def test_command_is_required() -> None:
@@ -161,3 +161,77 @@ def test_latency_pytorch_command(
     assert capsys.readouterr().out.strip() == (
         f"end to end p50 61.2 ms, 15.5 FPS from the mean: {results}"
     )
+
+
+def test_download_saco_gold_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(download, "download_saco_gold", lambda root: root / "all")
+
+    cli.main(["download", "saco-gold", "--root", str(tmp_path)])
+
+    assert capsys.readouterr().out.strip() == str(tmp_path / "all")
+
+
+def test_accuracy_saco_gold_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs = []
+    results = tmp_path / "result.json"
+    average = {"cgF1": 0.0512, "IL_MCC": 0.214, "positive_micro_F1": 0.2391}
+    results.write_text(json.dumps({"average": average}))
+
+    def fake_run(run: saco_gold.SacoGoldRun, results_dir: Path) -> Path:
+        runs.append(run)
+        return results
+
+    monkeypatch.setattr(saco_gold, "run_saco_gold", fake_run)
+
+    cli.main(["accuracy", "saco-gold", "--model", "efficientsam3_repvit"])
+
+    run = runs[0]
+    assert (run.model, run.precision, run.images_per_subset) == (
+        "efficientsam3_repvit",
+        "bf16",
+        100,
+    )
+    assert run.subsets == tuple(saco_gold.SUBSETS)
+    assert capsys.readouterr().out.strip() == (
+        f"cgF1 5.12, IL_MCC 0.21, pmF1 23.91 averaged over 7 domains: {results}"
+    )
+
+
+def test_accuracy_saco_gold_takes_chosen_subsets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runs = []
+    results = tmp_path / "result.json"
+    average = {"cgF1": 0.1, "IL_MCC": 0.3, "positive_micro_F1": 0.3}
+    results.write_text(json.dumps({"average": average}))
+
+    def fake_run(run: saco_gold.SacoGoldRun, results_dir: Path) -> Path:
+        runs.append(run)
+        return results
+
+    monkeypatch.setattr(saco_gold, "run_saco_gold", fake_run)
+
+    cli.main(
+        [
+            "accuracy",
+            "saco-gold",
+            "--model",
+            "efficientsam3_tinyvit",
+            "--subsets",
+            "crowded",
+            "sa1b",
+            "--images-per-subset",
+            "3",
+        ]
+    )
+
+    assert runs[0].subsets == ("crowded", "sa1b")
+    assert runs[0].images_per_subset == 3

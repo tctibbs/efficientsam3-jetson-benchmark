@@ -27,6 +27,8 @@ dependencies = [
     "omegaconf>=2.3.0",
     # Mask hole filling
     "scikit-image>=0.21.0",
+    # cgF1 scoring
+    "scipy",
     "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 

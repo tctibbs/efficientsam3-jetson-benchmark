@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from efficientsam3_jetson_benchmark import download, environment
@@ -81,14 +82,20 @@ def event_factory(device_type: str) -> Callable[[], Any] | None:
     return None
 
 
-def load_pipeline(run: LatencyRun, checkpoint: Path) -> tuple[Any, Any]:
-    """Build the model and upstream's processor, with both on the same device."""
-    # Upstream is importable only once its package directory is on sys.path.
-    sys.path.insert(0, str((run.upstream / "sam3").resolve()))
-    builder = importlib.import_module("sam3.model_builder")
-    processing = importlib.import_module("sam3.model.sam3_image_processor")
+def import_upstream(upstream: Path, name: str) -> ModuleType:
+    """Import a module from upstream's sam3 package, putting it on sys.path once."""
+    package_dir = str((upstream / "sam3").resolve())
+    if package_dir not in sys.path:
+        sys.path.insert(0, package_dir)
+    return importlib.import_module(name)
 
-    backbone, variant = FULL_MODELS[run.model]
+
+def load_pipeline(model_name: str, checkpoint: Path, upstream: Path) -> tuple[Any, Any]:
+    """Build the model and upstream's processor, with both on the same device."""
+    builder = import_upstream(upstream, "sam3.model_builder")
+    processing = import_upstream(upstream, "sam3.model.sam3_image_processor")
+
+    backbone, variant = FULL_MODELS[model_name]
     model = builder.build_efficientsam3_image_model(
         checkpoint_path=str(checkpoint),
         backbone_type=backbone,
@@ -168,7 +175,7 @@ def measure(run: LatencyRun) -> dict[str, Any]:
             f"{checkpoint} is missing or unverified; run "
             f"`efficientsam3-jetson-benchmark download checkpoint {run.model}`"
         )
-    model, processor = load_pipeline(run, checkpoint)
+    model, processor = load_pipeline(run.model, checkpoint, run.upstream)
     device_type = processor.device.type
     make_event = event_factory(device_type)
     timer = StageTimer(synchronizer(device_type), make_event=make_event)
