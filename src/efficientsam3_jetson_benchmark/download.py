@@ -49,6 +49,15 @@ def _stage1(name: str, size_bytes: int, sha256: str) -> HubFile:
     )
 
 
+def _full(name: str, size_bytes: int, sha256: str) -> HubFile:
+    return HubFile(
+        EFFICIENTSAM3_REPO,
+        EFFICIENTSAM3_REVISION,
+        f"efficientsam3_ft/{name}.pt",
+        PinnedFile(size_bytes, sha256),
+    )
+
+
 CHECKPOINTS: dict[str, HubFile] = {
     "efficient_sam3_efficientvit_s": _stage1(
         "efficient_sam3_efficientvit_s",
@@ -94,6 +103,21 @@ CHECKPOINTS: dict[str, HubFile] = {
         "efficient_sam3_tinyvit_l",
         1778451881,
         "8209c620d728624b10136696bb3ce30b97e83e476b9ec9f41b0472ee5be7b0c1",
+    ),
+    "efficientsam3_efficientvit": _full(
+        "efficientsam3_efficientvit",
+        468394477,
+        "086b04b2e7da7cc98aa4621b70c7291608aa9d187357b98d03bd4d6533ed5a17",
+    ),
+    "efficientsam3_repvit": _full(
+        "efficientsam3_repvit",
+        482292909,
+        "cf9dc34f7e7a4fd6967e21ce660d45f7d6512669556c02658eadf469bdae20ab",
+    ),
+    "efficientsam3_tinyvit": _full(
+        "efficientsam3_tinyvit",
+        492809614,
+        "3a52c42f975a9562cb656a57aebb60314d7871c3956e4955c91364a8fe3875dc",
     ),
     "sam3": HubFile(
         "facebook/sam3",

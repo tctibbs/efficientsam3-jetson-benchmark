@@ -128,7 +128,39 @@ def test_jetson_details_reads_board_files(
         "model": "NVIDIA Jetson Board",
         "l4t": "36.4.4",
         "power_mode": "MAXN_SUPER",
+        "gpu_clock_mhz": None,
+        "cpu_clock_mhz": {},
     }
+
+
+def test_cpu_clock_mhz_reads_each_cluster(tmp_path: Path) -> None:
+    for name, khz in (("policy0", 1728000), ("policy4", 1497600)):
+        policy = tmp_path / "sys/devices/system/cpu/cpufreq" / name
+        policy.mkdir(parents=True)
+        for prefix in ("cur", "min", "max"):
+            (policy / f"scaling_{prefix}_freq").write_text(f"{khz}\n")
+
+    assert environment.cpu_clock_mhz(tmp_path) == {
+        "policy0": {"current": 1728.0, "min": 1728.0, "max": 1728.0},
+        "policy4": {"current": 1497.6, "min": 1497.6, "max": 1497.6},
+    }
+
+
+def test_gpu_clock_mhz_reads_the_devfreq_files(tmp_path: Path) -> None:
+    gpu = tmp_path / "sys" / "class" / "devfreq" / "17000000.gpu"
+    gpu.mkdir(parents=True)
+    for name, hertz in (("cur", 1020000000), ("min", 306000000), ("max", 1020000000)):
+        (gpu / f"{name}_freq").write_text(f"{hertz}\n")
+
+    assert environment.gpu_clock_mhz(tmp_path) == {
+        "current": 1020.0,
+        "min": 306.0,
+        "max": 1020.0,
+    }
+
+
+def test_gpu_clock_mhz_is_none_without_a_gpu(tmp_path: Path) -> None:
+    assert environment.gpu_clock_mhz(tmp_path) is None
 
 
 def test_jetson_details_is_none_off_a_jetson(tmp_path: Path) -> None:
