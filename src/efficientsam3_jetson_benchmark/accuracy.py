@@ -137,7 +137,15 @@ def run_coco_accuracy(run: CocoAccuracyRun, results_dir: Path) -> Path:
         "environment": context,
         "runtime": {
             key: summary[key]
-            for key in ("torch", "numpy", "device_type", "device_name", "autocast")
+            for key in (
+                "torch",
+                "numpy",
+                "cuda",
+                "cudnn",
+                "device_type",
+                "device_name",
+                "autocast",
+            )
         },
         "checkpoint": {
             "name": run.checkpoint,
