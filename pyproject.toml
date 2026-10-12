@@ -30,6 +30,9 @@ dependencies = [
     "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
+[project.scripts]
+efficientsam3-jetson-benchmark = "efficientsam3_jetson_benchmark.__main__:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
