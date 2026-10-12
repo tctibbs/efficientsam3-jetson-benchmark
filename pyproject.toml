@@ -29,6 +29,9 @@ dependencies = [
     "triton-windows==3.4.0.post21 ; sys_platform == 'win32'",
 ]
 
+[project.scripts]
+efficientsam3-jetson-benchmark = "efficientsam3_jetson_benchmark.__main__:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
