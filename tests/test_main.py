@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -311,6 +312,7 @@ def test_examples_coco_command(
         300,
     )
     assert results_dir == Path("results/examples/coco")
+    assert run.pins == (("large", 397133, "person"),)
     assert capsys.readouterr().out.strip() == (
         f"found 3, partial 1, missed 2: {results}"
     )
@@ -326,8 +328,26 @@ def test_examples_gallery_command(
         "flickr_url": "http://x/7.jpg",
         "license": "Attribution License",
     }
-    monkeypatch.setattr(examples, "redraw_gallery", lambda results, coco_root: [photo])
+    pinned = []
 
-    cli.main(["examples", "gallery", "--results", str(tmp_path)])
+    def fake_redraw(
+        results: Path, coco_root: Path, pins: tuple[tuple[str, int, str], ...]
+    ) -> list[dict[str, Any]]:
+        pinned.append(pins)
+        return [photo]
 
+    monkeypatch.setattr(examples, "redraw_gallery", fake_redraw)
+
+    cli.main(
+        ["examples", "gallery", "--results", str(tmp_path), "--pins", "mixup:5:hot dog"]
+    )
+
+    assert pinned == [(("mixup", 5, "hot dog"),)]
     assert capsys.readouterr().out.strip() == "7 http://x/7.jpg (Attribution License)"
+
+
+def test_gallery_pins_must_name_a_row(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["examples", "gallery", "--pins", "best:5:cat"])
+
+    assert "row must be one of" in capsys.readouterr().err

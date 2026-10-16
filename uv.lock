@@ -85,6 +85,7 @@ dependencies = [
     { name = "ftfy" },
     { name = "huggingface-hub" },
     { name = "iopath" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "opencv-python-headless" },
@@ -106,7 +107,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "matplotlib" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -119,6 +119,7 @@ requires-dist = [
     { name = "ftfy", specifier = "==6.1.1" },
     { name = "huggingface-hub" },
     { name = "iopath", specifier = ">=0.1.10" },
+    { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=1.26.4,<2" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
@@ -140,7 +141,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.17.0" },

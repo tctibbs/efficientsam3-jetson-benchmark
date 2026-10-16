@@ -15,6 +15,8 @@ from efficientsam3_jetson_benchmark import (
 
 # First COCO val2017 image, the one eval_coco.py also takes first.
 DEFAULT_IMAGE = Path("data/coco/images/val2017/000000397133.jpg")
+# Gallery photos chosen by hand.
+GALLERY_PINS = [("large", 397133, "person")]
 
 
 def positive_int(text: str) -> int:
@@ -23,6 +25,16 @@ def positive_int(text: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
     return value
+
+
+def gallery_pin(text: str) -> tuple[str, int, str]:
+    """Parse ROW:IMAGE_ID:PROMPT into a gallery pin."""
+    row, image_id, name = text.split(":", 2)
+    if row not in examples.ROW_OUTCOMES:
+        raise argparse.ArgumentTypeError(
+            f"row must be one of {', '.join(examples.ROW_OUTCOMES)}"
+        )
+    return row, int(image_id), name
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,6 +153,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gallery.add_argument("--coco-root", type=Path, default=Path("data/coco"))
     gallery.add_argument("--results", type=Path, default=Path("results/examples/coco"))
+    for command in (coco_examples, gallery):
+        command.add_argument(
+            "--pins",
+            nargs="*",
+            type=gallery_pin,
+            default=GALLERY_PINS,
+            metavar="ROW:IMAGE_ID:PROMPT",
+            help="gallery photos chosen by hand, shown first in their row",
+        )
 
     draw = commands.add_parser("figures", help="Draw each benchmark's figure")
     draw.add_argument("--results", type=Path, default=Path("results"))
@@ -222,7 +243,8 @@ def run_latency(args: argparse.Namespace) -> None:
 def run_examples(args: argparse.Namespace) -> None:
     """Run the examples, or redraw their gallery, and print the outcome."""
     if args.source == "gallery":
-        for photo in examples.redraw_gallery(args.results, args.coco_root):
+        pins = tuple(args.pins)
+        for photo in examples.redraw_gallery(args.results, args.coco_root, pins):
             print(f"{photo['image_id']} {photo['flickr_url']} ({photo['license']})")
         return
     run = examples.ExamplesRun(
@@ -232,6 +254,7 @@ def run_examples(args: argparse.Namespace) -> None:
         checkpoints_root=args.checkpoints_root,
         coco_root=args.coco_root,
         upstream=args.upstream,
+        pins=tuple(args.pins),
     )
     path = examples.run_examples(run, args.results)
     outcomes = json.loads(path.read_text())["summary"]["outcomes"]

@@ -29,6 +29,8 @@ dependencies = [
     "scikit-image>=0.21.0",
     # cgF1 scoring
     "scipy",
+    # Figures and gallery
+    "matplotlib>=3.10.9",
     "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
@@ -37,7 +39,6 @@ efficientsam3-jetson-benchmark = "efficientsam3_jetson_benchmark.__main__:main"
 
 [dependency-groups]
 dev = [
-    "matplotlib>=3.10.9",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.0",

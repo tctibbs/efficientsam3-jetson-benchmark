@@ -2,9 +2,10 @@
 
 Each chosen image is prompted with the name of every COCO category it contains,
 plus two it doesn't. The predicted masks are matched to COCO's outlines at an
-IoU of at least 0.5, and each prompt gets one outcome: found every object,
-found some, missed all, or a false alarm on a category that isn't there. The
-gallery shows examples of what the model does well and badly.
+IoU of at least 0.5, and each prompt gets one outcome: found every object with
+no wrong masks, partly right (found some, or found all but drew a wrong mask
+too), missed all, or a false alarm on a category that isn't there. The gallery
+shows examples of what the model does well and badly.
 """
 
 import json
@@ -16,9 +17,8 @@ from typing import Any
 
 from efficientsam3_jetson_benchmark import download, environment, latency, saco_gold
 
-# COCO licence ids whose images may be shown with credit: CC BY 2.0, and no known
-# copyright restrictions.
-SHOWABLE_LICENSES = (4, 7)
+# COCO licence ids whose images may be shown with credit, and their names.
+SHOWABLE_LICENSES = {4: "CC BY 2.0", 7: "No known copyright restrictions"}
 ABSENT_PROMPTS = 2
 MATCH_IOU = 0.5
 # COCO's own object size bands, by area in pixels.
@@ -32,9 +32,15 @@ GALLERY_ROWS = (
     ("small_missed", "Small, missed"),
     ("mixup", "Mix-ups"),
 )
+# The outcomes each row shows.
+ROW_OUTCOMES = {
+    "large": ("found",),
+    "several": ("found",),
+    "small_found": ("found", "partial"),
+    "small_missed": ("missed",),
+    "mixup": ("false_alarm",),
+}
 PER_ROW = 5
-# Photos chosen by hand, shown first in their row: (COCO image id, prompt).
-PINNED = {"large": ((397133, "person"),)}
 # The large-object row shows the categories found most often among those with
 # at least this many objects.
 MIN_CATEGORY_OBJECTS = 10
@@ -58,6 +64,8 @@ class ExamplesRun:
     coco_root: Path
     checkpoints_root: Path
     upstream: Path
+    # (row, COCO image id, prompt) for gallery photos chosen by hand.
+    pins: tuple[tuple[str, int, str], ...] = ()
 
 
 def choose_images(dataset: dict[str, Any], count: int) -> list[dict[str, Any]]:
@@ -118,18 +126,24 @@ def match(
         for column in range(len(truth))
     )
     pairs: set[tuple[int, int]] = set()
+    used_rows: set[int] = set()
+    used_columns: set[int] = set()
     for negative_iou, row, column in candidates:
         if -negative_iou < MATCH_IOU:
             break
-        if all(
-            row != used_row and column != used_column for used_row, used_column in pairs
-        ):
+        if row not in used_rows and column not in used_columns:
             pairs.add((row, column))
+            used_rows.add(row)
+            used_columns.add(column)
     return pairs
 
 
 def outcome(truth: int, found: int, predicted: int) -> str:
-    """Name what happened for one prompt."""
+    """Name what happened for one prompt.
+
+    A prompt is found only when every object is found and no mask is wrong.
+    Finding some objects, or all of them plus a wrong mask, is partial.
+    """
     if truth == 0:
         return "false_alarm" if predicted else "correct_rejection"
     if found == 0:
@@ -171,18 +185,31 @@ def small_found(prompt: dict[str, Any]) -> int:
 
 
 def fits(row: str, prompt: dict[str, Any]) -> bool:
-    """Return whether a prompt shows what a gallery row is about."""
+    """Return whether a prompt shows what a gallery row is about.
+
+    Raises:
+        ValueError: The row isn't one of GALLERY_ROWS.
+    """
+    if row not in ROW_OUTCOMES:
+        raise ValueError(f"unknown gallery row {row!r}")
+    if prompt["outcome"] not in ROW_OUTCOMES[row]:
+        return False
     areas = prompt["object_areas"]
     if row == "large":
-        return prompt["outcome"] == "found" and min(areas) >= LARGE_AREA
+        return min(areas) >= LARGE_AREA
     if row == "several":
-        return prompt["outcome"] == "found" and prompt["truth"] >= 3
+        return prompt["truth"] >= 3
     if row == "small_found":
         return small_found(prompt) > 0
     if row == "small_missed":
-        return prompt["outcome"] == "missed" and max(areas) < SMALL_AREA
+        return max(areas) < SMALL_AREA
     covered = prompt.get("covered", [])
-    return prompt["outcome"] == "false_alarm" and bool(covered) and all(covered)
+    return bool(covered) and all(covered)
+
+
+def landscape(prompt: dict[str, Any]) -> bool:
+    """Return whether a prompt's photo is landscape, between 4:3 and 3:2."""
+    return MIN_ASPECT <= prompt["width"] / prompt["height"] <= MAX_ASPECT
 
 
 def find_rates(prompts: list[dict[str, Any]]) -> dict[str, float]:
@@ -200,16 +227,21 @@ def find_rates(prompts: list[dict[str, Any]]) -> dict[str, float]:
 
 def select(
     prompts: list[dict[str, Any]],
+    pins: tuple[tuple[str, int, str], ...] = (),
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     """Pick the gallery rows, PER_ROW prompts that fit each.
 
-    Pinned photos come first in their row. The rest are ranked: large objects
-    by how often their category is found, among categories with at least
-    MIN_CATEGORY_OBJECTS objects; several at once and small misses by most
-    objects; small finds by most small objects found; and mix-ups in file
-    order. Each prompt comes from a different landscape photo between 4:3
-    and 3:2. A row uses different categories where it can, then fills with
-    repeats.
+    Pinned photos come first in their row, if they have an outcome the row
+    shows. The rest are ranked: large objects by how often their category is
+    found, among categories with at least MIN_CATEGORY_OBJECTS objects;
+    several at once and small misses by most objects; small finds by most
+    small objects found; and mix-ups in file order. Each prompt comes from a
+    different landscape photo between 4:3 and 3:2. A row uses different
+    categories where it can, then fills with repeats.
+
+    Args:
+        prompts: The prompts of one examples record.
+        pins: (row, COCO image id, prompt) for photos chosen by hand.
 
     Returns:
         (row label, prompts) for each row with at least one prompt.
@@ -225,25 +257,26 @@ def select(
     used_images: set[int] = set()
     rows = []
     for row, label in GALLERY_ROWS:
-        chosen = [
+        pinned = [
             prompt
-            for image_id, name in PINNED.get(row, ())
             for prompt in prompts
-            if prompt["image_id"] == image_id and prompt["name"] == name
+            if (row, prompt["image_id"], prompt["name"]) in pins
+            and prompt["outcome"] in ROW_OUTCOMES[row]
+            and landscape(prompt)
         ]
-        used_images.update(prompt["image_id"] for prompt in chosen)
         ranked = sorted(
             (
                 (index, prompt)
                 for index, prompt in enumerate(prompts)
                 if fits(row, prompt)
-                and MIN_ASPECT <= prompt["width"] / prompt["height"] <= MAX_ASPECT
+                and landscape(prompt)
                 and (row != "large" or prompt["name"] in rates)
             ),
             key=lambda item: (ranking[row](item[1]), item[0]),
         )
+        chosen: list[dict[str, Any]] = []
         for distinct in (True, False):
-            for _, prompt in ranked:
+            for prompt in pinned + [prompt for _, prompt in ranked]:
                 names = {example["name"] for example in chosen}
                 if (
                     len(chosen) < PER_ROW
@@ -295,10 +328,7 @@ def lookalikes(prompt: dict[str, Any], coco: Any) -> list[str | None]:
 
 
 def draw_gallery(
-    rows: list[tuple[str, list[dict[str, Any]]]],
-    images: Path,
-    outlines: dict[int, list[dict[str, Any]]],
-    path: Path,
+    rows: list[tuple[str, list[dict[str, Any]]]], images: Path, path: Path
 ) -> Path:
     """Draw each row of examples over their photos, with the row's label.
 
@@ -306,9 +336,9 @@ def draw_gallery(
     outlines of the objects are yellow.
 
     Args:
-        rows: (label, prompts) per row, with each prompt's masks as RLE.
+        rows: (label, prompts) per row, with each prompt's masks and COCO's
+            outlines of its objects as RLE, under "masks" and "outlines".
         images: The folder holding the COCO images.
-        outlines: COCO's outlines as RLE, keyed by the prompt's id().
         path: Where to write the JPEG.
     """
     import numpy
@@ -345,7 +375,7 @@ def draw_gallery(
                 overlay[mask_utils.decode(mask).astype(bool)] = (*color, 0.55)
             axes.imshow(photo)
             axes.imshow(overlay)
-            for outline in outlines[id(example)]:
+            for outline in example["outlines"]:
                 axes.contour(
                     mask_utils.decode(outline),
                     levels=[0.5],
@@ -382,28 +412,37 @@ def draw_gallery(
     return path
 
 
+def outlines(prompt: dict[str, Any], coco: Any) -> list[dict[str, Any]]:
+    """Return COCO's outlines of a prompt's objects as RLE."""
+    labels = coco.loadAnns(
+        coco.getAnnIds(
+            imgIds=prompt["image_id"], catIds=[prompt["category_id"]], iscrowd=False
+        )
+    )
+    return [coco.annToRLE(label) for label in labels]
+
+
 def write_gallery(
-    record: dict[str, Any], coco: Any, images: Path, path: Path
+    rows: list[tuple[str, list[dict[str, Any]]]],
+    coco: Any,
+    images: Path,
+    folder: Path,
 ) -> list[dict[str, Any]]:
-    """Draw the gallery from a run's record and return the examples it shows."""
-    rows = select(with_lookalikes(record["prompts"], coco))
-    examples = [example for _, row in rows for example in row]
-    outlines = {
-        id(example): [
-            coco.annToRLE(label)
-            for label in coco.loadAnns(
-                coco.getAnnIds(
-                    imgIds=example["image_id"],
-                    catIds=[example["category_id"]],
-                    iscrowd=False,
-                )
-            )
-        ]
-        for example in examples
-    }
-    if rows:
-        draw_gallery(rows, images, outlines, path)
-    return examples
+    """Draw the gallery rows into folder, with a credit for each photo.
+
+    Returns:
+        The credits for each photo in the gallery.
+    """
+    if not rows:
+        return []
+    outlined = [
+        (label, [example | {"outlines": outlines(example, coco)} for example in row])
+        for label, row in rows
+    ]
+    draw_gallery(outlined, images, folder / "gallery.jpg")
+    photos = credits(coco, [example for _, row in rows for example in row])
+    write_credits(photos, folder / "CREDITS.md")
+    return photos
 
 
 def with_lookalikes(prompts: list[dict[str, Any]], coco: Any) -> list[dict[str, Any]]:
@@ -418,15 +457,39 @@ def with_lookalikes(prompts: list[dict[str, Any]], coco: Any) -> list[dict[str, 
 
 def credits(coco: Any, examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return each gallery photo's COCO id, Flickr address, and licence."""
-    licenses = {license["id"]: license for license in coco.dataset["licenses"]}
-    return [
-        {
-            "image_id": example["image_id"],
-            "flickr_url": coco.imgs[example["image_id"]]["flickr_url"],
-            "license": licenses[coco.imgs[example["image_id"]]["license"]]["name"],
-        }
-        for example in examples
+    urls = {license["id"]: license["url"] for license in coco.dataset["licenses"]}
+    photos = []
+    for example in examples:
+        image = coco.imgs[example["image_id"]]
+        photos.append(
+            {
+                "image_id": example["image_id"],
+                "flickr_url": image["flickr_url"],
+                "license": SHOWABLE_LICENSES[image["license"]],
+                "license_url": urls[image["license"]],
+            }
+        )
+    return photos
+
+
+def write_credits(photos: list[dict[str, Any]], path: Path) -> Path:
+    """Write the gallery's photo credits as a Markdown table."""
+    lines = [
+        "# Photo credits",
+        "",
+        "The example photos are from COCO val2017 and are used under the licenses "
+        "below. The masks and outlines were drawn over them.",
+        "",
+        "| COCO image | Photo | License |",
+        "|---|---|---|",
+        *(
+            f"| {photo['image_id']} | [Flickr]({photo['flickr_url']}) "
+            f"| [{photo['license']}]({photo['license_url']}) |"
+            for photo in photos
+        ),
     ]
+    path.write_text("\n".join(lines) + "\n")
+    return path
 
 
 def load_coco(coco_root: Path) -> Any:
@@ -465,6 +528,9 @@ def run_examples(run: ExamplesRun, results_dir: Path) -> Path:
     coco = load_coco(run.coco_root)
     images = run.coco_root / "images" / "val2017"
     chosen = choose_images(coco.dataset, run.images)
+    download.download_coco_files(
+        [image["file_name"] for image in chosen], run.coco_root
+    )
     pairs: list[dict[str, Any]] = []
     for image in chosen:
         labels = coco.loadAnns(coco.getAnnIds(imgIds=image["id"]))
@@ -558,12 +624,23 @@ def run_examples(run: ExamplesRun, results_dir: Path) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     path = results_dir / f"{run_id}.json"
     path.write_text(json.dumps(record) + "\n")
-    write_gallery(record, coco, images, results_dir / "gallery.jpg")
+    write_gallery(
+        select(with_lookalikes(prompts, coco), run.pins), coco, images, results_dir
+    )
     return path
 
 
-def redraw_gallery(results_dir: Path, coco_root: Path) -> list[dict[str, Any]]:
+def redraw_gallery(
+    results_dir: Path,
+    coco_root: Path,
+    pins: tuple[tuple[str, int, str], ...] = (),
+) -> list[dict[str, Any]]:
     """Redraw the gallery from the newest record, downloading any missing photos.
+
+    Args:
+        results_dir: The folder holding the examples records.
+        coco_root: The folder holding COCO's annotations and images.
+        pins: (row, COCO image id, prompt) for photos chosen by hand.
 
     Returns:
         The credits for each photo in the gallery.
@@ -576,16 +653,8 @@ def redraw_gallery(results_dir: Path, coco_root: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"no examples record in {results_dir}")
     record = json.loads(records[-1].read_text())
     coco = load_coco(coco_root)
-    download.download_coco_images(
-        coco_root / download.COCO_ANNOTATIONS_MEMBER,
-        [
-            example["image_id"]
-            for _, row in select(with_lookalikes(record["prompts"], coco))
-            for example in row
-        ],
-        coco_root,
+    rows = select(with_lookalikes(record["prompts"], coco), pins)
+    download.download_coco_files(
+        [example["file_name"] for _, row in rows for example in row], coco_root
     )
-    shown = write_gallery(
-        record, coco, coco_root / "images" / "val2017", results_dir / "gallery.jpg"
-    )
-    return credits(coco, shown)
+    return write_gallery(rows, coco, coco_root / "images" / "val2017", results_dir)

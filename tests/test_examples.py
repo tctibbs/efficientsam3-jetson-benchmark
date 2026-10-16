@@ -81,9 +81,13 @@ def dataset() -> dict[str, Any]:
         ],
         "categories": CATEGORIES,
         "licenses": [
-            {"id": 1, "name": "Attribution-NonCommercial-ShareAlike License"},
-            {"id": 4, "name": "Attribution License"},
-            {"id": 7, "name": "No known copyright restrictions"},
+            {
+                "id": 1,
+                "name": "Attribution-NonCommercial-ShareAlike License",
+                "url": "",
+            },
+            {"id": 4, "name": "Attribution License", "url": "http://cc/by/2.0/"},
+            {"id": 7, "name": "No known copyright restrictions", "url": "http://pd/"},
         ],
     }
 
@@ -264,10 +268,7 @@ def test_find_rates_skip_categories_with_few_objects() -> None:
     assert examples.find_rates(prompts) == {"cat": 0.8}
 
 
-def test_select_fills_each_row_with_what_it_is_about(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(examples, "PINNED", {"large": ((9, "cup"),)})
+def test_select_fills_each_row_with_what_it_is_about() -> None:
     small = [500.0]
     prompts = [
         prompt(9, "found", "cup", truth=2, found=2, areas=[20000.0, 2000.0]),
@@ -282,7 +283,7 @@ def test_select_fills_each_row_with_what_it_is_about(
         prompt(10, "false_alarm", "boat", truth=0, predicted=1, covered=[None]),
     ]
 
-    rows = examples.select(prompts)
+    rows = examples.select(prompts, pins=(("large", 9, "cup"),))
 
     assert [
         (label, [(item["image_id"], item["name"]) for item in row])
@@ -294,6 +295,26 @@ def test_select_fills_each_row_with_what_it_is_about(
         ("Small, missed", [(7, "fork")]),
         ("Mix-ups", [(8, "cow")]),
     ]
+
+
+def test_select_skips_pins_that_dont_show_their_row() -> None:
+    prompts = [
+        prompt(1, "missed", "cup", truth=2),
+        prompt(2, "found", "dog", truth=3, found=3),
+        prompt(3, "found", "cat", truth=3, found=3, width=1000),  # too wide
+    ]
+    pins = (("large", 1, "cup"), ("several", 2, "dog"), ("several", 3, "cat"))
+
+    rows = examples.select(prompts, pins)
+
+    assert [(label, [item["image_id"] for item in row]) for label, row in rows] == [
+        ("Several at once", [2]),
+    ]
+
+
+def test_fits_rejects_unknown_rows() -> None:
+    with pytest.raises(ValueError, match="unknown gallery row"):
+        examples.fits("small_misses", prompt(1, "missed", "cat"))
 
 
 def test_select_prefers_new_categories_then_repeats() -> None:
@@ -374,6 +395,30 @@ def test_run_examples_writes_a_record_and_gallery(
     assert partial["matched_masks"] == [True]
     assert partial["objects_found"] == [True, False]
     assert (tmp_path / "results" / "gallery.jpg").read_bytes()[:2] == b"\xff\xd8"
+    assert (
+        "| 1 | [Flickr](http://example.com/1.jpg) | [CC BY 2.0](http://cc/by/2.0/) |"
+        in (tmp_path / "results" / "CREDITS.md").read_text()
+    )
+
+
+@pytest.mark.usefixtures("fake_model")
+def test_run_examples_downloads_missing_photos_first(
+    tmp_path: Path, examples_run: ExamplesRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing = examples_run.coco_root / "images" / "val2017" / "2.jpg"
+    missing.unlink()
+    fetched = []
+
+    def fake_stream(url: str, target: Path) -> Path:
+        fetched.append(url)
+        Image.new("RGB", (24, 16), "gray").save(target)
+        return target
+
+    monkeypatch.setattr(download, "stream_to_file", fake_stream)
+
+    examples.run_examples(examples_run, tmp_path / "results")
+
+    assert fetched == [download.COCO_IMAGES_URL + "2.jpg"]
 
 
 @pytest.mark.usefixtures("fake_model")
@@ -386,18 +431,19 @@ def test_redraw_gallery_uses_the_newest_record(
     fetched = []
     monkeypatch.setattr(
         download,
-        "download_coco_images",
-        lambda annotations, ids, root: fetched.extend(ids),
+        "download_coco_files",
+        lambda file_names, root: fetched.extend(file_names),
     )
 
     credits = examples.redraw_gallery(results, examples_run.coco_root)
 
     assert (results / "gallery.jpg").is_file()
-    assert fetched == [item["image_id"] for item in credits]
+    assert fetched == [f"{item['image_id']}.jpg" for item in credits]
     assert credits[0] == {
         "image_id": 1,
         "flickr_url": "http://example.com/1.jpg",
-        "license": "Attribution License",
+        "license": "CC BY 2.0",
+        "license_url": "http://cc/by/2.0/",
     }
 
 
@@ -407,10 +453,8 @@ def test_redraw_gallery_needs_a_record(tmp_path: Path) -> None:
 
 
 def test_empty_gallery_draws_nothing(tmp_path: Path) -> None:
-    record = {"prompts": [prompt(1, "correct_rejection", "cat", truth=0)]}
-
-    assert examples.write_gallery(record, None, tmp_path, tmp_path / "g.jpg") == []
-    assert not (tmp_path / "g.jpg").exists()
+    assert examples.write_gallery([], None, tmp_path, tmp_path) == []
+    assert not list(tmp_path.iterdir())
 
 
 def test_run_examples_requires_a_verified_checkpoint(examples_run: ExamplesRun) -> None:
