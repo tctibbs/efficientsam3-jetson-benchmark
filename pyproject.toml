@@ -37,6 +37,7 @@ efficientsam3-jetson-benchmark = "efficientsam3_jetson_benchmark.__main__:main"
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.10.9",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.0",
