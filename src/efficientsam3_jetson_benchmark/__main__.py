@@ -4,10 +4,19 @@ import argparse
 import json
 from pathlib import Path
 
-from efficientsam3_jetson_benchmark import accuracy, download, latency, saco_gold
+from efficientsam3_jetson_benchmark import (
+    accuracy,
+    download,
+    examples,
+    figures,
+    latency,
+    saco_gold,
+)
 
 # First COCO val2017 image, the one eval_coco.py also takes first.
 DEFAULT_IMAGE = Path("data/coco/images/val2017/000000397133.jpg")
+# Gallery photos chosen by hand.
+GALLERY_PINS = [("large", 397133, "person")]
 
 
 def positive_int(text: str) -> int:
@@ -16,6 +25,16 @@ def positive_int(text: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
     return value
+
+
+def gallery_pin(text: str) -> tuple[str, int, str]:
+    """Parse ROW:IMAGE_ID:PROMPT into a gallery pin."""
+    row, image_id, name = text.split(":", 2)
+    if row not in examples.ROW_OUTCOMES:
+        raise argparse.ArgumentTypeError(
+            f"row must be one of {', '.join(examples.ROW_OUTCOMES)}"
+        )
+    return row, int(image_id), name
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,7 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
     coco_accuracy.add_argument(
         "--upstream", type=Path, default=Path("third_party/efficientsam3")
     )
-    coco_accuracy.add_argument("--results", type=Path, default=Path("results"))
+    coco_accuracy.add_argument(
+        "--results", type=Path, default=Path("results/accuracy/coco")
+    )
     gold_accuracy = suites.add_parser(
         "saco-gold", help="SA-Co/Gold text-prompt cgF1 on the first N images per domain"
     )
@@ -83,7 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     gold_accuracy.add_argument(
         "--upstream", type=Path, default=Path("third_party/efficientsam3")
     )
-    gold_accuracy.add_argument("--results", type=Path, default=Path("results"))
+    gold_accuracy.add_argument(
+        "--results", type=Path, default=Path("results/accuracy/saco-gold")
+    )
 
     timing = commands.add_parser("latency", help="Run latency benchmarks")
     backends = timing.add_subparsers(dest="backend", required=True)
@@ -100,7 +123,48 @@ def build_parser() -> argparse.ArgumentParser:
     pytorch.add_argument(
         "--upstream", type=Path, default=Path("third_party/efficientsam3")
     )
-    pytorch.add_argument("--results", type=Path, default=Path("results"))
+    pytorch.add_argument(
+        "--results", type=Path, default=Path("results/latency/pytorch")
+    )
+    show = commands.add_parser("examples", help="Draw example results")
+    sources = show.add_subparsers(dest="source", required=True)
+    coco_examples = sources.add_parser(
+        "coco", help="Text prompts on COCO images, sorted into hits and misses"
+    )
+    coco_examples.add_argument(
+        "--model", default="efficientsam3_tinyvit", choices=sorted(latency.FULL_MODELS)
+    )
+    coco_examples.add_argument(
+        "--precision", default="bf16", choices=latency.PRECISIONS
+    )
+    coco_examples.add_argument("--images", type=positive_int, default=300)
+    coco_examples.add_argument(
+        "--checkpoints-root", type=Path, default=Path("checkpoints")
+    )
+    coco_examples.add_argument("--coco-root", type=Path, default=Path("data/coco"))
+    coco_examples.add_argument(
+        "--upstream", type=Path, default=Path("third_party/efficientsam3")
+    )
+    coco_examples.add_argument(
+        "--results", type=Path, default=Path("results/examples/coco")
+    )
+    gallery = sources.add_parser(
+        "gallery", help="Redraw the COCO gallery from the newest examples record"
+    )
+    gallery.add_argument("--coco-root", type=Path, default=Path("data/coco"))
+    gallery.add_argument("--results", type=Path, default=Path("results/examples/coco"))
+    for command in (coco_examples, gallery):
+        command.add_argument(
+            "--pins",
+            nargs="*",
+            type=gallery_pin,
+            default=GALLERY_PINS,
+            metavar="ROW:IMAGE_ID:PROMPT",
+            help="gallery photos chosen by hand, shown first in their row",
+        )
+
+    draw = commands.add_parser("figures", help="Draw each benchmark's figure")
+    draw.add_argument("--results", type=Path, default=Path("results"))
     return parser
 
 
@@ -176,6 +240,35 @@ def run_latency(args: argparse.Namespace) -> None:
     )
 
 
+def run_examples(args: argparse.Namespace) -> None:
+    """Run the examples, or redraw their gallery, and print the outcome."""
+    if args.source == "gallery":
+        pins = tuple(args.pins)
+        for photo in examples.redraw_gallery(args.results, args.coco_root, pins):
+            print(f"{photo['image_id']} {photo['flickr_url']} ({photo['license']})")
+        return
+    run = examples.ExamplesRun(
+        model=args.model,
+        precision=args.precision,
+        images=args.images,
+        checkpoints_root=args.checkpoints_root,
+        coco_root=args.coco_root,
+        upstream=args.upstream,
+        pins=tuple(args.pins),
+    )
+    path = examples.run_examples(run, args.results)
+    outcomes = json.loads(path.read_text())["summary"]["outcomes"]
+    print(
+        ", ".join(f"{name} {count}" for name, count in outcomes.items()) + f": {path}"
+    )
+
+
+def run_figures(args: argparse.Namespace) -> None:
+    """Draw the figures and print where they went."""
+    for path in figures.write_figures(args.results):
+        print(path)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run the command given on the command line."""
     args = build_parser().parse_args(argv)
@@ -183,6 +276,8 @@ def main(argv: list[str] | None = None) -> None:
         "download": run_download,
         "accuracy": run_accuracy,
         "latency": run_latency,
+        "examples": run_examples,
+        "figures": run_figures,
     }
     commands[args.command](args)
 

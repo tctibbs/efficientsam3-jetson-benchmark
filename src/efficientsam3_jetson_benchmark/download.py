@@ -269,12 +269,23 @@ def download_coco_images(
         Paths of the images, in image_ids order.
     """
     file_names = {image["id"]: image["file_name"] for image in _images(annotations)}
+    return download_coco_files(
+        [file_names[image_id] for image_id in image_ids], coco_root
+    )
+
+
+def download_coco_files(file_names: list[str], coco_root: Path) -> list[Path]:
+    """Download the named val2017 image files, skipping files already present.
+
+    Returns:
+        Paths of the images, in file_names order.
+    """
     image_dir = coco_root / "images" / "val2017"
     paths = []
-    for image_id in image_ids:
-        target = image_dir / file_names[image_id]
+    for file_name in file_names:
+        target = image_dir / file_name
         if not target.is_file():
-            stream_to_file(COCO_IMAGES_URL + file_names[image_id], target)
+            stream_to_file(COCO_IMAGES_URL + file_name, target)
         paths.append(target)
     return paths
 

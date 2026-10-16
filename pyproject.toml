@@ -29,6 +29,8 @@ dependencies = [
     "scikit-image>=0.21.0",
     # cgF1 scoring
     "scipy",
+    # Figures and gallery
+    "matplotlib>=3.10.9",
     "triton==3.4.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 

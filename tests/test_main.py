@@ -1,10 +1,18 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from efficientsam3_jetson_benchmark import __main__ as cli
-from efficientsam3_jetson_benchmark import accuracy, download, latency, saco_gold
+from efficientsam3_jetson_benchmark import (
+    accuracy,
+    download,
+    examples,
+    figures,
+    latency,
+    saco_gold,
+)
 
 
 def test_command_is_required() -> None:
@@ -235,3 +243,111 @@ def test_accuracy_saco_gold_takes_chosen_subsets(
 
     assert runs[0].subsets == ("crowded", "sa1b")
     assert runs[0].images_per_subset == 3
+
+
+@pytest.mark.parametrize(
+    ("argv", "results"),
+    [
+        (
+            [
+                "accuracy",
+                "coco",
+                "--checkpoint",
+                "efficient_sam3_tinyvit_s",
+                "--first",
+                "1",
+            ],
+            "results/accuracy/coco",
+        ),
+        (
+            ["accuracy", "saco-gold", "--model", "efficientsam3_tinyvit"],
+            "results/accuracy/saco-gold",
+        ),
+        (
+            ["latency", "pytorch", "--model", "efficientsam3_tinyvit"],
+            "results/latency/pytorch",
+        ),
+    ],
+)
+def test_each_benchmark_writes_to_its_own_folder(argv: list[str], results: str) -> None:
+    assert cli.build_parser().parse_args(argv).results == Path(results)
+
+
+def test_figures_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        figures, "write_figures", lambda results: [results / "speed.svg"]
+    )
+
+    cli.main(["figures", "--results", str(tmp_path)])
+
+    assert capsys.readouterr().out.strip() == str(tmp_path / "speed.svg")
+
+
+def test_examples_coco_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs = []
+    results = tmp_path / "result.json"
+    outcomes = {"found": 3, "partial": 1, "missed": 2}
+    results.write_text(json.dumps({"summary": {"outcomes": outcomes}}))
+
+    def fake_run(run: examples.ExamplesRun, results_dir: Path) -> Path:
+        runs.append((run, results_dir))
+        return results
+
+    monkeypatch.setattr(examples, "run_examples", fake_run)
+
+    cli.main(["examples", "coco"])
+
+    run, results_dir = runs[0]
+    assert (run.model, run.precision, run.images) == (
+        "efficientsam3_tinyvit",
+        "bf16",
+        300,
+    )
+    assert results_dir == Path("results/examples/coco")
+    assert run.pins == (("large", 397133, "person"),)
+    assert capsys.readouterr().out.strip() == (
+        f"found 3, partial 1, missed 2: {results}"
+    )
+
+
+def test_examples_gallery_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    photo = {
+        "image_id": 7,
+        "flickr_url": "http://x/7.jpg",
+        "license": "Attribution License",
+    }
+    pinned = []
+
+    def fake_redraw(
+        results: Path, coco_root: Path, pins: tuple[tuple[str, int, str], ...]
+    ) -> list[dict[str, Any]]:
+        pinned.append(pins)
+        return [photo]
+
+    monkeypatch.setattr(examples, "redraw_gallery", fake_redraw)
+
+    cli.main(
+        ["examples", "gallery", "--results", str(tmp_path), "--pins", "mixup:5:hot dog"]
+    )
+
+    assert pinned == [(("mixup", 5, "hot dog"),)]
+    assert capsys.readouterr().out.strip() == "7 http://x/7.jpg (Attribution License)"
+
+
+def test_gallery_pins_must_name_a_row(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["examples", "gallery", "--pins", "best:5:cat"])
+
+    assert "row must be one of" in capsys.readouterr().err
