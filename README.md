@@ -4,6 +4,18 @@ How fast and how accurate [EfficientSAM3](https://github.com/SimonZeng7108/effic
 
 This project isn't affiliated with the EfficientSAM3 authors, Meta, or NVIDIA.
 
+## Examples
+
+These examples come from TV-M, one of the EfficientSAM3 models, running on the Jetson. It was asked to find COCO categories by name in 300 photos. The rows go from what it does well at the top to what it gets wrong at the bottom.
+
+![EfficientSAM3 on 25 COCO photos, from what it does well to what it does badly](results/examples/coco/gallery.jpg)
+
+TV-M is good at large objects and found 69% of them. It can also pick out several of the same thing in one photo.
+
+Small objects are much harder. It found just 6% of those under 32 by 32 pixels.
+
+When asked for something that isn't in the photo, it usually marks nothing. About 1 time in 20 it marks something anyway. Most of those marks land on another real object.
+
 ## Models
 
 EfficientSAM3 makes Meta's SAM 3 smaller by swapping its large encoders for small ones. Its checkpoints come from different training stages. Two of those stages are tested here. Stage 1 replaces only the image encoder. Stage 3 also replaces the text encoder and fine-tunes the result.
@@ -43,16 +55,6 @@ The best model, TV-M, scores 14.9. Meta reports 54.1 for SAM 3 on the full bench
 
 [Full results](results/accuracy/saco-gold/)
 
-### Examples
-
-TV-M was asked to find each COCO category in 300 COCO images. It was also asked for two categories missing from each image. The top row shows the first images where it found every object. The bottom row shows its first miss, partial result, and false alarm.
-
-![Example results: three hits, then a miss, a partial result, and a false alarm](results/examples/coco/gallery.jpg)
-
-It found 69% of large objects, 42% of medium objects, and 6% of small objects.
-
-[Full results](results/examples/coco/)
-
 ## Running the benchmarks
 
 You'll need JetPack 6 with CUDA 12.6, [uv](https://docs.astral.sh/uv/), up to 22 GB of disk space, and about 5 GB of free memory.
@@ -89,6 +91,8 @@ uv run pytest && uv run ruff check . && uv run ty check
 This repository is licensed under the [MIT License](LICENSE).
 
 This project builds upon [EfficientSAM3](https://github.com/SimonZeng7108/efficientsam3), [SAM 3](https://github.com/facebookresearch/sam3), [COCO](https://cocodataset.org/), and [SA-Co/Gold](https://huggingface.co/datasets/facebook/SACo-Gold). Please refer to their respective licenses for usage terms.
+
+The example photos are from COCO val2017 and are used under the [Creative Commons Attribution 2.0 license](http://creativecommons.org/licenses/by/2.0/). See the [photo credits](results/examples/coco/CREDITS.md).
 
 ## Acknowledgments
 

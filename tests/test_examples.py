@@ -157,9 +157,14 @@ def fake_model(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def prompt(
-    image_id: int, outcome: str, name: str, truth: int = 1, found: int = 0, **extra: Any
+    image_id: int,
+    outcome: str,
+    name: str,
+    truth: int = 1,
+    found: int = 0,
+    **extra: Any,
 ) -> dict[str, Any]:
-    """A prompt as the record stores it, on a landscape image."""
+    """A prompt as the record stores it, on a 4:3 photo with large objects."""
     return {
         "image_id": image_id,
         "outcome": outcome,
@@ -169,6 +174,9 @@ def prompt(
         "predicted": extra.get("predicted", found),
         "width": extra.get("width", 640),
         "height": 480,
+        "object_areas": extra.get("areas", [20000.0] * truth),
+        "objects_found": [index < found for index in range(truth)],
+        "covered": extra.get("covered", []),
     }
 
 
@@ -241,50 +249,103 @@ def test_summarize_counts_outcomes_and_objects_by_size() -> None:
     assert summary["objects_by_size"]["large"] == {"objects": 1, "found": 1}
 
 
-def test_select_ranks_hits_and_failures_by_object_count() -> None:
+def test_small_found_counts_only_small_objects() -> None:
+    item = prompt(1, "partial", "cat", truth=3, found=2, areas=[500.0, 20000.0, 600.0])
+
+    assert examples.small_found(item) == 1
+
+
+def test_find_rates_skip_categories_with_few_objects() -> None:
     prompts = [
-        prompt(1, "found", "cat", truth=2, found=2),
-        prompt(2, "found", "cat", truth=5, found=5),
-        prompt(3, "found", "dog", truth=3, found=3),
-        prompt(4, "found", "bus", truth=9, found=9, width=400),  # not landscape
-        prompt(5, "found", "car", truth=1, found=1),
-        prompt(6, "missed", "cup", truth=2),
-        prompt(7, "missed", "fork", truth=6),
-        prompt(8, "partial", "kite", truth=5, found=1, predicted=1),
-        prompt(9, "partial", "boat", truth=3, found=2, predicted=2),
-        prompt(10, "false_alarm", "zebra", truth=0, predicted=1),
-        prompt(11, "false_alarm", "bear", truth=0, predicted=3),
+        prompt(1, "partial", "cat", truth=10, found=8),
+        prompt(2, "found", "dog", truth=2, found=2),
     ]
 
-    chosen = examples.select(prompts)
+    assert examples.find_rates(prompts) == {"cat": 0.8}
 
-    assert [(item["image_id"], item["name"]) for item in chosen] == [
-        (2, "cat"),
+
+def test_select_fills_each_row_with_what_it_is_about(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(examples, "PINNED", {"large": ((9, "cup"),)})
+    small = [500.0]
+    prompts = [
+        prompt(9, "found", "cup", truth=2, found=2, areas=[20000.0, 2000.0]),
+        prompt(1, "found", "cat", truth=10, found=10),  # cat: 10 of 12 found
+        prompt(2, "missed", "cat", truth=2),
+        prompt(3, "found", "dog", truth=10, found=10),  # dog: all 10 found
+        prompt(4, "found", "bus", truth=1, found=1),  # too few buses to rank
+        prompt(5, "found", "kite", truth=3, found=3, areas=[3000.0] * 3),
+        prompt(6, "found", "car", truth=1, found=1, areas=small),
+        prompt(7, "missed", "fork", truth=1, areas=small),
+        prompt(8, "false_alarm", "cow", truth=0, predicted=1, covered=["zebra"]),
+        prompt(10, "false_alarm", "boat", truth=0, predicted=1, covered=[None]),
+    ]
+
+    rows = examples.select(prompts)
+
+    assert [
+        (label, [(item["image_id"], item["name"]) for item in row])
+        for label, row in rows
+    ] == [
+        ("Large objects", [(9, "cup"), (3, "dog"), (1, "cat")]),
+        ("Several at once", [(5, "kite")]),
+        ("Small, found", [(6, "car")]),
+        ("Small, missed", [(7, "fork")]),
+        ("Mix-ups", [(8, "cow")]),
+    ]
+
+
+def test_select_prefers_new_categories_then_repeats() -> None:
+    prompts = [
+        prompt(1, "found", "cat", truth=6, found=6, areas=[3000.0] * 6),
+        prompt(2, "found", "cat", truth=5, found=5, areas=[3000.0] * 5),
+        prompt(3, "found", "dog", truth=3, found=3, areas=[3000.0] * 3),
+        prompt(4, "found", "cat", truth=4, found=4, width=1000),  # too wide
+    ]
+
+    rows = examples.select(prompts)
+
+    several = dict(rows)["Several at once"]
+    assert [(item["image_id"], item["name"]) for item in several] == [
+        (1, "cat"),
         (3, "dog"),
-        (5, "car"),
-        (7, "fork"),
-        (8, "kite"),
-        (11, "bear"),
+        (2, "cat"),
     ]
 
 
-def test_select_leaves_out_outcomes_that_never_happened() -> None:
-    prompts = [prompt(1, "found", "cat", found=1)]
+def test_lookalikes_names_the_object_a_wrong_mask_covers() -> None:
+    from pycocotools.coco import COCO
 
-    assert examples.select(prompts) == prompts
+    coco = COCO()
+    coco.dataset = dataset()
+    coco.createIndex()
+    item = {
+        "image_id": 1,
+        "masks": [rle(square(2)), rle(square(6)), rle(square(2))],
+        "matched_masks": [False, False, True],
+    }
+    unlabelled = {"image_id": 99, "masks": [rle(square(2))], "matched_masks": [False]}
+
+    assert examples.lookalikes(item, coco) == ["cat", None]
+    assert examples.lookalikes(unlabelled, coco) == [None]
 
 
 @pytest.mark.parametrize(
     ("item", "expected"),
     [
+        (
+            prompt(1, "false_alarm", "sheep", truth=0, predicted=1, covered=["bear"]),
+            '"sheep": found 0 of 0, plus 1 wrong mask',
+        ),
         (prompt(1, "found", "cat", truth=2, found=2), '"cat": found 2 of 2'),
         (
             prompt(1, "partial", "cat", truth=2, found=1, predicted=3),
-            '"cat": found 1 of 2, 2 wrong',
+            '"cat": found 1 of 2, plus 2 wrong masks',
         ),
         (
             prompt(1, "false_alarm", "dog", truth=0, predicted=1),
-            '"dog": none in photo, 1 wrong',
+            '"dog": found 0 of 0, plus 1 wrong mask',
         ),
     ],
 )

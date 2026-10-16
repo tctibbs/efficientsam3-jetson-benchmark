@@ -4,7 +4,7 @@ Each chosen image is prompted with the name of every COCO category it contains,
 plus two it doesn't. The predicted masks are matched to COCO's outlines at an
 IoU of at least 0.5, and each prompt gets one outcome: found every object,
 found some, missed all, or a false alarm on a category that isn't there. The
-gallery shows the strongest and weakest results by object count.
+gallery shows examples of what the model does well and badly.
 """
 
 import json
@@ -24,17 +24,25 @@ MATCH_IOU = 0.5
 # COCO's own object size bands, by area in pixels.
 SIZE_BANDS = (("small", 32**2), ("medium", 96**2), ("large", float("inf")))
 OUTCOMES = ("found", "partial", "missed", "false_alarm", "correct_rejection")
-# The gallery: three hits, then one of each kind of failure, ranked by how many
-# objects or masks the outcome involves.
-GALLERY = ("found", "found", "found", "missed", "partial", "false_alarm")
-RANKING = {
-    "found": lambda prompt: prompt["truth"],
-    "missed": lambda prompt: prompt["truth"],
-    "partial": lambda prompt: prompt["truth"] - prompt["found"],
-    "false_alarm": lambda prompt: prompt["predicted"],
-}
-# Gallery photos must be landscape, so the panels line up.
+# The gallery rows, from strengths to weaknesses.
+GALLERY_ROWS = (
+    ("large", "Large objects"),
+    ("several", "Several at once"),
+    ("small_found", "Small, found"),
+    ("small_missed", "Small, missed"),
+    ("mixup", "Mix-ups"),
+)
+PER_ROW = 5
+# Photos chosen by hand, shown first in their row: (COCO image id, prompt).
+PINNED = {"large": ((397133, "person"),)}
+# The large-object row shows the categories found most often among those with
+# at least this many objects.
+MIN_CATEGORY_OBJECTS = 10
+LARGE_AREA = SIZE_BANDS[1][1]
+SMALL_AREA = SIZE_BANDS[0][1]
+# Gallery photos must be landscape, between 4:3 and 3:2, so the panels line up.
 MIN_ASPECT = 1.3
+MAX_ASPECT = 1.55
 MATCHED_COLOR = (0.18, 0.8, 0.44)
 WRONG_COLOR = (0.91, 0.3, 0.24)
 OUTLINE_COLOR = "#ffd400"
@@ -151,58 +159,156 @@ def summarize(prompts: list[dict[str, Any]]) -> dict[str, Any]:
     return {"outcomes": counts, "objects_by_size": bands}
 
 
-def select(prompts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pick the gallery: the three biggest hits, then the biggest of each failure.
+def small_found(prompt: dict[str, Any]) -> int:
+    """Return how many small objects a prompt found."""
+    return sum(
+        was_found
+        for area, was_found in zip(
+            prompt["object_areas"], prompt["objects_found"], strict=True
+        )
+        if area < SMALL_AREA
+    )
 
-    Hits are ranked by objects found, misses by objects missed, partial
-    results by objects missed, and false alarms by wrong masks. Each pick
-    comes from a different landscape photo, the hits from different
-    categories, and ties go to the earlier prompt.
+
+def fits(row: str, prompt: dict[str, Any]) -> bool:
+    """Return whether a prompt shows what a gallery row is about."""
+    areas = prompt["object_areas"]
+    if row == "large":
+        return prompt["outcome"] == "found" and min(areas) >= LARGE_AREA
+    if row == "several":
+        return prompt["outcome"] == "found" and prompt["truth"] >= 3
+    if row == "small_found":
+        return small_found(prompt) > 0
+    if row == "small_missed":
+        return prompt["outcome"] == "missed" and max(areas) < SMALL_AREA
+    covered = prompt.get("covered", [])
+    return prompt["outcome"] == "false_alarm" and bool(covered) and all(covered)
+
+
+def find_rates(prompts: list[dict[str, Any]]) -> dict[str, float]:
+    """Return the share of objects found per category with enough objects."""
+    totals: dict[str, list[int]] = {}
+    for prompt in prompts:
+        found, objects = totals.get(prompt["name"], [0, 0])
+        totals[prompt["name"]] = [found + prompt["found"], objects + prompt["truth"]]
+    return {
+        name: found / objects
+        for name, (found, objects) in totals.items()
+        if objects >= MIN_CATEGORY_OBJECTS
+    }
+
+
+def select(
+    prompts: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Pick the gallery rows, PER_ROW prompts that fit each.
+
+    Pinned photos come first in their row. The rest are ranked: large objects
+    by how often their category is found, among categories with at least
+    MIN_CATEGORY_OBJECTS objects; several at once and small misses by most
+    objects; small finds by most small objects found; and mix-ups in file
+    order. Each prompt comes from a different landscape photo between 4:3
+    and 3:2. A row uses different categories where it can, then fills with
+    repeats.
+
+    Returns:
+        (row label, prompts) for each row with at least one prompt.
     """
-    chosen: list[dict[str, Any]] = []
-    for wanted in GALLERY:
-        used_images = {example["image_id"] for example in chosen}
-        used_names = {example["name"] for example in chosen}
-        candidates = [
-            (index, prompt)
-            for index, prompt in enumerate(prompts)
-            if prompt["outcome"] == wanted
-            and prompt["width"] >= MIN_ASPECT * prompt["height"]
-            and prompt["image_id"] not in used_images
-            and (wanted != "found" or prompt["name"] not in used_names)
+    rates = find_rates(prompts)
+    ranking = {
+        "large": lambda prompt: -rates.get(prompt["name"], -1.0),
+        "several": lambda prompt: -prompt["truth"],
+        "small_found": lambda prompt: -small_found(prompt),
+        "small_missed": lambda prompt: -prompt["truth"],
+        "mixup": lambda prompt: 0,
+    }
+    used_images: set[int] = set()
+    rows = []
+    for row, label in GALLERY_ROWS:
+        chosen = [
+            prompt
+            for image_id, name in PINNED.get(row, ())
+            for prompt in prompts
+            if prompt["image_id"] == image_id and prompt["name"] == name
         ]
-        if candidates:
-            rank = RANKING[wanted]
-            chosen.append(
-                max(candidates, key=lambda item: (rank(item[1]), -item[0]))[1]
-            )
-    return chosen
+        used_images.update(prompt["image_id"] for prompt in chosen)
+        ranked = sorted(
+            (
+                (index, prompt)
+                for index, prompt in enumerate(prompts)
+                if fits(row, prompt)
+                and MIN_ASPECT <= prompt["width"] / prompt["height"] <= MAX_ASPECT
+                and (row != "large" or prompt["name"] in rates)
+            ),
+            key=lambda item: (ranking[row](item[1]), item[0]),
+        )
+        for distinct in (True, False):
+            for _, prompt in ranked:
+                names = {example["name"] for example in chosen}
+                if (
+                    len(chosen) < PER_ROW
+                    and prompt["image_id"] not in used_images
+                    and not (distinct and prompt["name"] in names)
+                ):
+                    chosen.append(prompt)
+                    used_images.add(prompt["image_id"])
+        if chosen:
+            rows.append((label, chosen))
+    return rows
 
 
 def caption(prompt: dict[str, Any]) -> str:
-    """Describe one gallery example in a few words."""
-    if prompt["outcome"] == "false_alarm":
-        return f'"{prompt["name"]}": none in photo, {prompt["predicted"]} wrong'
-    extra = prompt["predicted"] - prompt["found"]
+    """Describe one gallery example: objects found, and any wrong masks."""
     text = f'"{prompt["name"]}": found {prompt["found"]} of {prompt["truth"]}'
-    return f"{text}, {extra} wrong" if extra else text
+    wrong = prompt["predicted"] - prompt["found"]
+    if not wrong:
+        return text
+    return f"{text}, plus {wrong} wrong mask{'' if wrong == 1 else 's'}"
+
+
+def lookalikes(prompt: dict[str, Any], coco: Any) -> list[str | None]:
+    """Name the COCO object each wrong mask covers, or None where it covers none.
+
+    A wrong mask covers an object of another category when their IoU is at
+    least MATCH_IOU.
+    """
+    from pycocotools import mask as mask_utils
+
+    labels = coco.loadAnns(coco.getAnnIds(imgIds=prompt["image_id"], iscrowd=False))
+    outlines = [coco.annToRLE(label) for label in labels]
+    names = {
+        category["id"]: category["name"] for category in coco.dataset["categories"]
+    }
+    covered: list[str | None] = []
+    for mask, matched in zip(prompt["masks"], prompt["matched_masks"], strict=True):
+        if matched:
+            continue
+        if not outlines:
+            covered.append(None)
+            continue
+        ious = mask_utils.iou([mask], outlines, [0] * len(outlines))[0]
+        best = max(range(len(outlines)), key=lambda index: ious[index])
+        covered.append(
+            names[labels[best]["category_id"]] if ious[best] >= MATCH_IOU else None
+        )
+    return covered
 
 
 def draw_gallery(
-    examples: list[dict[str, Any]],
+    rows: list[tuple[str, list[dict[str, Any]]]],
     images: Path,
-    outlines: list[list[dict[str, Any]]],
+    outlines: dict[int, list[dict[str, Any]]],
     path: Path,
 ) -> Path:
-    """Draw each example over its photo, three to a row.
+    """Draw each row of examples over their photos, with the row's label.
 
     Masks that match an object are green and masks that don't are red. COCO's
     outlines of the objects are yellow.
 
     Args:
-        examples: Selected prompts, with their predicted masks as RLE.
+        rows: (label, prompts) per row, with each prompt's masks as RLE.
         images: The folder holding the COCO images.
-        outlines: COCO's outlines as RLE, one list per example.
+        outlines: COCO's outlines as RLE, keyed by the prompt's id().
         path: Where to write the JPEG.
     """
     import numpy
@@ -212,44 +318,54 @@ def draw_gallery(
     from PIL import Image
     from pycocotools import mask as mask_utils
 
-    columns = 3
-    rows = (len(examples) + columns - 1) // columns
-    figure = Figure(figsize=(5 * columns, 3.75 * rows + 0.6))
+    figure = Figure(figsize=(4 * PER_ROW, 3.15 * len(rows) + 0.5))
     axes_grid = figure.subplots(
-        rows, columns, squeeze=False, gridspec_kw={"wspace": 0.03, "hspace": 0.16}
+        len(rows),
+        PER_ROW,
+        squeeze=False,
+        gridspec_kw={
+            "wspace": 0.03,
+            "hspace": 0.18,
+            "top": 0.95,
+            "bottom": 0.01,
+            "left": 0.03,
+            "right": 0.99,
+        },
     )
-    for axes, example, truth in zip(axes_grid.flat, examples, outlines, strict=False):
-        photo = numpy.asarray(Image.open(images / example["file_name"]).convert("RGB"))
-        overlay = numpy.zeros((*photo.shape[:2], 4))
-        for mask, matched in zip(
-            example["masks"], example["matched_masks"], strict=True
-        ):
-            color = MATCHED_COLOR if matched else WRONG_COLOR
-            overlay[mask_utils.decode(mask).astype(bool)] = (*color, 0.55)
-        axes.imshow(photo)
-        axes.imshow(overlay)
-        for outline in truth:
-            axes.contour(
-                mask_utils.decode(outline),
-                levels=[0.5],
-                colors=OUTLINE_COLOR,
-                linewidths=1.5,
+    for axes_row, (label, examples) in zip(axes_grid, rows, strict=True):
+        for axes, example in zip(axes_row, examples, strict=False):
+            photo = numpy.asarray(
+                Image.open(images / example["file_name"]).convert("RGB")
             )
-        axes.set_title(caption(example), fontsize=12)
-    for axes in axes_grid.flat:
-        axes.set_axis_off()
-    for row, label in zip(axes_grid, ("Strongest", "Weakest"), strict=False):
-        row[0].text(
-            -0.03,
+            overlay = numpy.zeros((*photo.shape[:2], 4))
+            for mask, matched in zip(
+                example["masks"], example["matched_masks"], strict=True
+            ):
+                color = MATCHED_COLOR if matched else WRONG_COLOR
+                overlay[mask_utils.decode(mask).astype(bool)] = (*color, 0.55)
+            axes.imshow(photo)
+            axes.imshow(overlay)
+            for outline in outlines[id(example)]:
+                axes.contour(
+                    mask_utils.decode(outline),
+                    levels=[0.5],
+                    colors=OUTLINE_COLOR,
+                    linewidths=1.5,
+                )
+            axes.set_title(caption(example), fontsize=10)
+        axes_row[0].text(
+            -0.04,
             0.5,
             label,
             rotation=90,
-            transform=row[0].transAxes,
+            transform=axes_row[0].transAxes,
             ha="right",
             va="center",
             fontsize=13,
             fontweight="bold",
         )
+    for axes in axes_grid.flat:
+        axes.set_axis_off()
     figure.legend(
         handles=[
             Patch(color=MATCHED_COLOR, alpha=0.7, label="Mask on an object"),
@@ -257,11 +373,12 @@ def draw_gallery(
             Line2D([], [], color=OUTLINE_COLOR, linewidth=2, label="COCO's outline"),
         ],
         loc="upper center",
+        bbox_to_anchor=(0.5, 1.0),
         ncols=3,
         frameon=False,
         fontsize=12,
     )
-    figure.savefig(path, format="jpeg", dpi=110, bbox_inches="tight")
+    figure.savefig(path, format="jpeg", dpi=100, bbox_inches="tight")
     return path
 
 
@@ -269,9 +386,10 @@ def write_gallery(
     record: dict[str, Any], coco: Any, images: Path, path: Path
 ) -> list[dict[str, Any]]:
     """Draw the gallery from a run's record and return the examples it shows."""
-    examples = select(record["prompts"])
-    outlines = [
-        [
+    rows = select(with_lookalikes(record["prompts"], coco))
+    examples = [example for _, row in rows for example in row]
+    outlines = {
+        id(example): [
             coco.annToRLE(label)
             for label in coco.loadAnns(
                 coco.getAnnIds(
@@ -282,10 +400,20 @@ def write_gallery(
             )
         ]
         for example in examples
-    ]
-    if examples:
-        draw_gallery(examples, images, outlines, path)
+    }
+    if rows:
+        draw_gallery(rows, images, outlines, path)
     return examples
+
+
+def with_lookalikes(prompts: list[dict[str, Any]], coco: Any) -> list[dict[str, Any]]:
+    """Add what each false alarm's wrong masks covered, under "covered"."""
+    return [
+        prompt | {"covered": lookalikes(prompt, coco)}
+        if prompt["outcome"] == "false_alarm"
+        else prompt
+        for prompt in prompts
+    ]
 
 
 def credits(coco: Any, examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -448,10 +576,13 @@ def redraw_gallery(results_dir: Path, coco_root: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"no examples record in {results_dir}")
     record = json.loads(records[-1].read_text())
     coco = load_coco(coco_root)
-    examples = select(record["prompts"])
     download.download_coco_images(
         coco_root / download.COCO_ANNOTATIONS_MEMBER,
-        [example["image_id"] for example in examples],
+        [
+            example["image_id"]
+            for _, row in select(with_lookalikes(record["prompts"], coco))
+            for example in row
+        ],
         coco_root,
     )
     shown = write_gallery(
